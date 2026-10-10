@@ -78,8 +78,11 @@ importers:
       '@holdfast/core':
         specifier: workspace:*
         version: link:../core
+      ox:
+        specifier: 0.14.54
+        version: 0.14.54(typescript@7.0.2)
       viem:
-        specifier: ^2.57.4
+        specifier: 2.57.4
         version: 2.57.4(typescript@7.0.2)
 
   packages/zcash:

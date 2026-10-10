@@ -3,10 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
-  "scripts": { "test": "vitest run --passWithNoTests", "typecheck": "tsc -p tsconfig.json" },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json"
+  },
   "dependencies": {
     "@holdfast/core": "workspace:*",
-    "viem": "^2.57.4"
+    "viem": "2.57.4",
+    "ox": "0.14.54"
   }
 }
