@@ -20,14 +20,16 @@ const TABLES = [
 ];
 
 const INITIAL = MIGRATIONS[0] as Migration;
+const LEASE_TOKEN = MIGRATIONS[1] as Migration;
+const ALL = MIGRATIONS.map((migration) => migration.name);
 
 const SCRATCH: Migration = {
-  name: '0001_scratch',
+  name: '9001_scratch',
   sql: 'CREATE TABLE "holdfast"."scratch" ("id" integer PRIMARY KEY);\n--> statement-breakpoint\nALTER TABLE "holdfast"."scratch" ENABLE ROW LEVEL SECURITY;',
 };
 
 const BROKEN: Migration = {
-  name: '0002_broken',
+  name: '9002_broken',
   sql: 'CREATE TABLE "holdfast"."half" ("id" integer PRIMARY KEY);\n--> statement-breakpoint\nSELECT 1 / 0;',
 };
 
@@ -47,6 +49,7 @@ describe('the embedded migrations', () => {
   it('split into whole statements', () => {
     const statements = migrationStatements(INITIAL);
     expect(statements).toHaveLength(45);
+    expect(migrationStatements(LEASE_TOKEN)).toHaveLength(1);
     for (const statement of statements) {
       expect(statement).not.toContain('statement-breakpoint');
       expect(statement.endsWith(';')).toBe(true);
@@ -55,6 +58,11 @@ describe('the embedded migrations', () => {
       'SELECT 1;',
       'SELECT 2;',
     ]);
+  });
+
+  it('have not changed since they were applied to the hosted database', () => {
+    expect(ALL).toEqual(['0000_initial', '0001_lease_token']);
+    expect(migrationHash(INITIAL)).toBe('4fc90d09a5d4b7d668d16f8c810b17d29ba96a2700e379fdfd1e3363e2dbcea0');
   });
 
   it('hash the same whatever the line endings', () => {
@@ -179,25 +187,55 @@ describe('migrate, as the schema grows', () => {
     return rows.map((row) => row.name);
   };
 
-  it('adopts a database whose SQL was applied by hand', async () => {
+  it('adopts a database whose first migration was applied by hand, and brings it up to date', async () => {
     for (const statement of migrationStatements(INITIAL)) await connection.client.query(statement);
     expect(await exists('holdfast.migrations')).toBe(false);
 
-    expect(await migrate(connection.db)).toEqual(['0000_initial']);
-    expect(await recorded()).toEqual(['0000_initial']);
+    expect(await migrate(connection.db)).toEqual(ALL);
+    expect(await recorded()).toEqual(ALL);
   });
 
   it('leaves nothing of a run in which one migration fails', async () => {
-    await expect(migrate(connection.db, [INITIAL, SCRATCH, BROKEN])).rejects.toMatchObject({ cause: { message: 'division by zero' } });
+    await expect(migrate(connection.db, [...MIGRATIONS, SCRATCH, BROKEN])).rejects.toMatchObject({ cause: { message: 'division by zero' } });
     expect(await exists('holdfast.scratch')).toBe(false);
     expect(await exists('holdfast.half')).toBe(false);
-    expect(await recorded()).toEqual(['0000_initial']);
+    expect(await recorded()).toEqual(ALL);
   });
 
   it('applies only what is new, in order', async () => {
-    expect(await migrate(connection.db, [INITIAL, SCRATCH])).toEqual(['0001_scratch']);
+    expect(await migrate(connection.db, [...MIGRATIONS, SCRATCH])).toEqual(['9001_scratch']);
     expect(await exists('holdfast.scratch')).toBe(true);
-    expect(await recorded()).toEqual(['0000_initial', '0001_scratch']);
-    expect(await migrate(connection.db, [INITIAL, SCRATCH])).toEqual([]);
+    expect(await recorded()).toEqual([...ALL, '9001_scratch']);
+    expect(await migrate(connection.db, [...MIGRATIONS, SCRATCH])).toEqual([]);
+  });
+});
+
+describe('migrate, on a database that stopped at the first migration', () => {
+  let connection: PgliteConnection;
+
+  beforeAll(async () => {
+    connection = await connectPglite();
+    await migrate(connection.db, [INITIAL]);
+  }, STARTUP_TIMEOUT_MS);
+
+  afterAll(() => connection.close());
+
+  it('adds the lease token and leaves the organisations and their leases as they were', async () => {
+    const { client, db } = connection;
+    await client.query(
+      `insert into holdfast.orgs (id, name, ufvk_enc, birthday, hl_user, policy, tick_lease_until)
+       values ('before', 'Before', 'v1.x.y.z', 1, '0xabc', '{}', '2100-01-01T00:00:00Z')`,
+    );
+
+    expect(await migrate(db)).toEqual(['0001_lease_token']);
+    expect(await migrate(db)).toEqual([]);
+    const { rows } = await client.query('select id, tick_lease_until, tick_lease_token from holdfast.orgs');
+    expect(rows).toEqual([{ id: 'before', tick_lease_until: new Date('2100-01-01T00:00:00Z'), tick_lease_token: null }]);
+
+    // A lease taken by the code that ran before the token existed is still honoured until it runs out.
+    const store = pgUnderTest(db).store;
+    expect(await store.withOrgLock('before', async () => 1)).toEqual({ ran: false });
+    await client.query("update holdfast.orgs set tick_lease_until = '2000-01-01T00:00:00Z' where id = 'before'");
+    expect(await store.withOrgLock('before', async () => 1)).toEqual({ ran: true, value: 1 });
   });
 });

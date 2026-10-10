@@ -1,7 +1,8 @@
 import { DEFAULT_POLICY, ZERO_ROOT } from '@holdfast/core';
 import type { JournalEntry } from '@holdfast/engine';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { DEFAULT_LEASE_MS, type PgliteConnection } from '../src';
+import { drizzle } from 'drizzle-orm/pglite';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { DEFAULT_LEASE_MS, LeaseLostError, type PgliteConnection } from '../src';
 import { entryOf, orderOf, payment, scanOf } from './store-contract';
 import { BIRTHDAY, Clock, GAP, HIGH_HALF, LOW_HALF, NUL, note, occupy } from './support/fakes';
 import { ORG, STARTUP_TIMEOUT_MS, migratedPglite, pgStore, pgUnderTest } from './support/stores';
@@ -20,23 +21,88 @@ const one = async <T>(query: string, params: unknown[]): Promise<T> => {
   return rows[0];
 };
 
+/** A store whose leases run on a clock the test moves, standing in for the database's. */
 const setup = async (options: { leaseMs?: number } = {}) => {
   const clock = new Clock();
-  const under = pgUnderTest(connection.db, { now: clock.now, ...options });
+  const under = pgUnderTest(connection.db, { clockForTests: clock.now, ...options });
   return { ...under, clock, org: await under.addOrg() };
 };
 
+const leaseOn = (org: string) =>
+  one<{ until: Date | null; token: string | null }>(
+    'select tick_lease_until as until, tick_lease_token as token from holdfast.orgs where id = $1',
+    [org],
+  );
+
 describe('the tick lease', () => {
-  it('is written on the row while the work runs and cleared after', async () => {
+  it('is written on the row under a fresh token while the work runs, and cleared after', async () => {
     const { store, org, clock } = await setup();
-    const during = await store.withOrgLock(org, () =>
-      one<{ held: boolean }>('select tick_lease_until = $2::timestamptz as held from holdfast.orgs where id = $1', [
-        org,
-        new Date(clock.ms + DEFAULT_LEASE_MS).toISOString(),
-      ]),
-    );
-    expect(during).toEqual({ ran: true, value: { held: true } });
-    expect(await one('select tick_lease_until from holdfast.orgs where id = $1', [org])).toEqual({ tick_lease_until: null });
+    const first = await store.withOrgLock(org, () => leaseOn(org));
+    const second = await store.withOrgLock(org, () => leaseOn(org));
+    if (!first.ran || !second.ran) throw new Error('the lock was not taken');
+
+    expect(first.value.until).toEqual(new Date(clock.ms + DEFAULT_LEASE_MS));
+    expect(first.value.token).toMatch(/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/);
+    expect(second.value.token).not.toBe(first.value.token);
+    expect(await leaseOn(org)).toEqual({ until: null, token: null });
+  });
+
+  it('asks the database what time it is, and sends it none', async () => {
+    const queries: { query: string; params: unknown[] }[] = [];
+    const logged = drizzle(connection.client, { logger: { logQuery: (query, params) => queries.push({ query, params }) } });
+    const { store, addOrg } = pgUnderTest(logged);
+    const org = await addOrg();
+    queries.length = 0;
+
+    await store.withOrgLock(org, () => store.appendJournal(entryOf(org, 1, ZERO_ROOT)));
+
+    const [take, guard] = queries.filter((q) => q.query.startsWith('update') && q.query.includes('tick_lease_until'));
+    expect(take?.query).toContain('"tick_lease_until" = clock_timestamp() + ');
+    expect(take?.query).toContain('"tick_lease_until" < clock_timestamp()');
+    // The length of the lease, the organisation and the new token: no moment in time.
+    const sent = take?.params ?? [];
+    expect(sent).toHaveLength(3);
+    expect(sent).toContain(DEFAULT_LEASE_MS);
+    expect(sent).toContain(org);
+    expect(sent.filter((value) => typeof value === 'string' && /^[0-9a-f-]{36}$/.test(value))).toHaveLength(2);
+    expect(guard?.query).toContain('"tick_lease_token" = ');
+    expect(guard?.query).toContain('"tick_lease_until" > clock_timestamp()');
+    expect(await leaseOn(org)).toEqual({ until: null, token: null });
+  });
+
+  it('runs on the database clock when no other is given', async () => {
+    const { store, addOrg } = pgUnderTest(connection.db, { leaseMs: 400 });
+    const org = await addOrg();
+    const dead = await occupy(store, org);
+    expect(await store.withOrgLock(org, async () => 'early')).toEqual({ ran: false });
+
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    await expect(dead.run(() => store.appendJournal(entryOf(org, 1, ZERO_ROOT)))).rejects.toBeInstanceOf(LeaseLostError);
+    expect(await store.withOrgLock(org, async () => 'after')).toEqual({ ran: true, value: 'after' });
+  });
+
+  it('cannot be taken early by an instance whose clock runs fast, nor held late by one whose clock runs slow', async () => {
+    const { store, org, clock, journal } = await setup();
+    // A second instance on the same database. What the two of them believe
+    // the time to be is Date.now; the lease must not care.
+    const other = pgUnderTest(connection.db, { clockForTests: clock.now }).store;
+    const believed = vi.spyOn(Date, 'now');
+    try {
+      const holder = await occupy(store, org);
+
+      believed.mockReturnValue(clock.ms + 10 * DEFAULT_LEASE_MS);
+      expect(await other.withOrgLock(org, async () => 'stolen')).toEqual({ ran: false });
+      await holder.run(() => store.appendJournal(entryOf(org, 1, ZERO_ROOT)));
+
+      believed.mockReturnValue(clock.ms - 10 * DEFAULT_LEASE_MS);
+      clock.advance(DEFAULT_LEASE_MS + 1);
+      const [first] = await journal(org);
+      await expect(holder.run(() => store.appendJournal(entryOf(org, 2, first?.digest ?? ZERO_ROOT)))).rejects.toBeInstanceOf(LeaseLostError);
+      expect(await other.withOrgLock(org, async () => 'taken over')).toEqual({ ran: true, value: 'taken over' });
+      expect(await journal(org)).toHaveLength(1);
+    } finally {
+      believed.mockRestore();
+    }
   });
 
   it('runs out, so a tick that died holding it does not hold it for ever', async () => {
@@ -73,6 +139,128 @@ describe('the tick lease', () => {
     expect(await store.withOrgLock(org, async () => 'third')).toEqual({ ran: true, value: 'third' });
   });
 
+  describe('once a tick has outlived it', () => {
+    const coin = note(BIRTHDAY + 10, 3_000_000n);
+    const firstScan = scanOf(BIRTHDAY, BIRTHDAY + 50, { notes: [coin] });
+    const laterScan = scanOf(BIRTHDAY, BIRTHDAY + 90, { notes: [note(BIRTHDAY + 60, 9_000_000n)] });
+
+    it('refuses that tick a scan or a journal entry after another has taken over, and changes nothing', async () => {
+      const { store, org, clock, notes, journal } = await setup();
+      const first = entryOf(org, 1, ZERO_ROOT);
+      const late = await occupy(store, org);
+      await late.run(() => store.commitScan(org, firstScan));
+      await late.run(() => store.appendJournal(first));
+
+      clock.advance(DEFAULT_LEASE_MS + 1);
+      const successor = await occupy(store, org);
+
+      await expect(late.run(() => store.commitScan(org, laterScan))).rejects.toBeInstanceOf(LeaseLostError);
+      await expect(late.run(() => store.appendJournal(entryOf(org, 2, first.digest, { order: orderOf(org, 2) })))).rejects.toBeInstanceOf(LeaseLostError);
+      expect(await notes(org)).toEqual([coin]);
+      expect(await journal(org)).toEqual([first]);
+      expect(await store.orders(org)).toEqual([]);
+      expect(await store.loadOrg(org)).toMatchObject({ scannedTo: BIRTHDAY + 50, nextSeq: 2, lastDigest: first.digest });
+
+      // The successor is on the very same store, and writes under its own lease.
+      const second = entryOf(org, 2, first.digest);
+      await successor.run(() => store.commitScan(org, laterScan));
+      await successor.run(() => store.appendJournal(second));
+      expect(await journal(org)).toEqual([first, second]);
+      expect(await store.loadOrg(org)).toMatchObject({ scannedTo: BIRTHDAY + 90, nextSeq: 3, lastDigest: second.digest });
+
+      // The late tick ending does not hand back a lease that is no longer its own.
+      const token = (await leaseOn(org)).token;
+      expect(await late.leave()).toMatchObject({ ran: true });
+      expect((await leaseOn(org)).token).toBe(token);
+      await successor.run(() => store.appendJournal(entryOf(org, 3, second.digest)));
+      expect(await successor.leave()).toMatchObject({ ran: true });
+      expect(await leaseOn(org)).toEqual({ until: null, token: null });
+    });
+
+    it('refuses it across two stores on the same database as well', async () => {
+      const { store, org, clock, journal } = await setup();
+      const elsewhere = pgUnderTest(connection.db, { clockForTests: clock.now }).store;
+      const late = await occupy(store, org);
+      clock.advance(DEFAULT_LEASE_MS + 1);
+      const successor = await occupy(elsewhere, org);
+
+      await expect(late.run(() => store.appendJournal(entryOf(org, 1, ZERO_ROOT)))).rejects.toBeInstanceOf(LeaseLostError);
+      const entry = entryOf(org, 1, ZERO_ROOT);
+      await successor.run(() => elsewhere.appendJournal(entry));
+      expect(await journal(org)).toEqual([entry]);
+    });
+
+    it('refuses it even before anyone else has come for the lease', async () => {
+      const { store, org, clock, notes, journal } = await setup();
+      const late = await occupy(store, org);
+
+      clock.advance(DEFAULT_LEASE_MS - 1);
+      await late.run(() => store.commitScan(org, firstScan));
+
+      // On the dot the lease is nobody's: too late to write, too early to take.
+      clock.advance(1);
+      await expect(late.run(() => store.commitScan(org, laterScan))).rejects.toBeInstanceOf(LeaseLostError);
+      await expect(late.run(() => store.appendJournal(entryOf(org, 1, ZERO_ROOT)))).rejects.toBeInstanceOf(LeaseLostError);
+      expect(await store.withOrgLock(org, async () => 'on the dot')).toEqual({ ran: false });
+
+      expect(await notes(org)).toEqual([coin]);
+      expect(await journal(org)).toEqual([]);
+      expect(await store.loadOrg(org)).toMatchObject({ scannedTo: BIRTHDAY + 50, nextSeq: 1, lastDigest: ZERO_ROOT });
+    });
+
+    it('says the lease was lost, by name, whatever else is wrong with the write', async () => {
+      const { store, org, clock } = await setup();
+      const late = await occupy(store, org);
+      const first = entryOf(org, 1, ZERO_ROOT);
+      await late.run(() => store.appendJournal(first));
+      clock.advance(DEFAULT_LEASE_MS + 1);
+
+      const refused = await late.run(() => store.appendJournal(first)).catch((error: unknown) => error);
+      expect(refused).toBeInstanceOf(LeaseLostError);
+      expect(refused).toMatchObject({ name: 'LeaseLostError', orgId: org, message: `the tick lease on ${org} was lost; nothing was written` });
+    });
+  });
+
+  describe('while a tick still holds it', () => {
+    it('reports the ordinary refusals as before', async () => {
+      const { store, org } = await setup();
+      const tick = await occupy(store, org);
+      const first = entryOf(org, 1, ZERO_ROOT);
+      await tick.run(() => store.appendJournal(first));
+
+      await expect(tick.run(() => store.appendJournal(first))).rejects.toThrow('journal entry 1 is out of sequence, expected 2');
+      await expect(tick.run(() => store.appendJournal(entryOf(org, 2, ZERO_ROOT)))).rejects.toThrow('journal entry 2 does not follow the last entry');
+      await expect(tick.run(() => store.commitScan('nobody', scanOf(BIRTHDAY, BIRTHDAY + 1)))).rejects.toThrow('unknown organisation nobody');
+      expect(await tick.leave()).toMatchObject({ ran: true });
+    });
+
+    it('fences only the organisation the lease is for', async () => {
+      const { store, org, addOrg, clock, journal } = await setup();
+      const other = await addOrg();
+      const tick = await occupy(store, org);
+      const elsewhere = await occupy(store, other);
+
+      clock.advance(DEFAULT_LEASE_MS - 1);
+      const mine = entryOf(org, 1, ZERO_ROOT);
+      const theirs = entryOf(other, 1, ZERO_ROOT);
+      await tick.run(() => store.appendJournal(mine));
+      await elsewhere.run(() => store.appendJournal(theirs));
+      expect(await journal(org)).toEqual([mine]);
+      expect(await journal(other)).toEqual([theirs]);
+    });
+
+    it('leaves a write made outside any tick to the sequence check alone, as the in-memory store does', async () => {
+      const { store, org, journal } = await setup();
+      const tick = await occupy(store, org);
+      const entry = entryOf(org, 1, ZERO_ROOT);
+      await store.appendJournal(entry);
+      await store.commitScan(org, scanOf(BIRTHDAY, BIRTHDAY + 50));
+
+      expect(await journal(org)).toEqual([entry]);
+      await expect(tick.run(() => store.appendJournal(entry))).rejects.toThrow('journal entry 1 is out of sequence, expected 2');
+    });
+  });
+
   it('refuses a lease that is not a positive whole number of milliseconds', () => {
     for (const leaseMs of [0, -1, 1.5, Number.NaN]) {
       expect(() => pgStore(connection.db, { leaseMs })).toThrow('the lease must be a positive number of milliseconds');
@@ -100,7 +288,7 @@ describe('the tick lease', () => {
     it('reports why the work failed, and the lease runs out on its own', async () => {
       const { db, state } = flaky();
       const clock = new Clock();
-      const { store, addOrg } = pgUnderTest(db, { now: clock.now });
+      const { store, addOrg } = pgUnderTest(db, { clockForTests: clock.now });
       const org = await addOrg();
 
       await expect(

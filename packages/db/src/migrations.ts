@@ -292,4 +292,12 @@ CREATE INDEX IF NOT EXISTS "zcash_notes_unspent_idx" ON "holdfast"."zcash_notes"
 CREATE INDEX IF NOT EXISTS "zcash_outgoing_height_idx" ON "holdfast"."zcash_outgoing" USING btree ("org_id","height");
 `,
   },
+  {
+    name: "0001_lease_token",
+    sql: `-- The fencing token of the tick lease. Whoever takes the lease writes a fresh
+-- token here, and a tick may only write while its own token is still the one
+-- on the row. Safe to run again.
+ALTER TABLE "holdfast"."orgs" ADD COLUMN IF NOT EXISTS "tick_lease_token" uuid;
+`,
+  },
 ];

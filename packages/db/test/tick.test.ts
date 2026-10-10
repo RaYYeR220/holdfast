@@ -1,7 +1,7 @@
 import { ZERO_ROOT } from '@holdfast/core';
 import { type JournalEntry, MemoryStore, type Store, type TickDeps, cloidFor, entryDigest, tick, verifyChain } from '@holdfast/engine';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { PgliteConnection } from '../src';
+import { DEFAULT_LEASE_MS, LeaseLostError, type PgliteConnection } from '../src';
 import { BIRTHDAY, Chain, Clock, Venue, note, reference } from './support/fakes';
 import { ORG, STARTUP_TIMEOUT_MS, migratedPglite, pgStore } from './support/stores';
 
@@ -14,8 +14,7 @@ beforeAll(async () => {
 afterAll(() => connection.close());
 
 /** The engine with a chain, a venue and a price of the test's own, on whichever store it is given. */
-function world(store: Store, orgId: string) {
-  const clock = new Clock();
+function world(store: Store, orgId: string, clock = new Clock()) {
   const chain = new Chain();
   const venue = new Venue(clock.now);
   const deps: TickDeps = { store, scanner: chain, venue, reference: reference(clock.now), now: clock.now };
@@ -174,5 +173,40 @@ describe('tick on PgStore', () => {
     expect(repeated.order).toBeNull();
     expect(t.venue.orders.map((o) => o.cloid)).toEqual([cloidFor('tick-retry', 1, 0)]);
     expect(verifyChain(await t.store.journalRange('tick-retry', 1, 1), ZERO_ROOT)).toEqual({ ok: true });
+  });
+
+  it('fails a tick that outlived its lease instead of letting it write after the one that took over', async () => {
+    const clock = new Clock();
+    const store = pgStore(connection.db, { clockForTests: clock.now });
+    await store.createOrg({ id: 'tick-overrun', name: 'Acme Labs', ...ORG });
+    const t = world(store, 'tick-overrun', clock);
+    t.chain.notes = [note(BIRTHDAY + 10, 5_000_000n)];
+
+    // The first tick's scan takes longer than the lease lasts. While it is
+    // away another tick takes the organisation over and runs to the end.
+    const scan = t.chain.scan.bind(t.chain);
+    let successor: JournalEntry | undefined;
+    let stalls = 1;
+    t.chain.scan = async (range) => {
+      const found = await scan(range);
+      if (stalls-- > 0) {
+        clock.advance(DEFAULT_LEASE_MS + 1);
+        successor = await t.run();
+      }
+      return found;
+    };
+
+    await expect(t.run()).rejects.toBeInstanceOf(LeaseLostError);
+
+    expect(successor).toMatchObject({ seq: 1, order: { side: 'sell', lots: 5 } });
+    const stored = await store.journalRange('tick-overrun', 1, 9);
+    expect(stored).toEqual([successor]);
+    expect(verifyChain(stored, ZERO_ROOT)).toEqual({ ok: true });
+    expect(t.venue.orders).toHaveLength(1);
+    expect(await store.loadOrg('tick-overrun')).toMatchObject({ scannedTo: BIRTHDAY + 100, nextSeq: 2, lastDigest: successor?.digest });
+
+    // Nothing is left held: the next tick runs and carries the journal on.
+    const next = await t.run();
+    expect(next).toMatchObject({ seq: 2, prev: successor?.digest, order: null });
   });
 });

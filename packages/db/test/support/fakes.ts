@@ -136,20 +136,40 @@ export async function contend<T extends { ran: boolean }>(count: number, attempt
 
 /**
  * Take an organisation's lock and stay inside, the way a tick that is slow
- * or dead does. Resolves once the lock is held; `leave` lets the work finish.
+ * or dead does. Resolves once the lock is held. `run` does a piece of work as
+ * that tick, from inside the lock; `leave` lets the tick finish.
  */
 export async function occupy(store: Store, orgId: string) {
   const inside = pending();
-  const exit = pending();
+  const work: (() => Promise<void>)[] = [];
+  let leaving = false;
+  let wake = pending();
+
   const outcome = store.withOrgLock(orgId, async () => {
     inside.finish();
-    await exit.done;
+    while (!leaving || work.length > 0) {
+      const next = work.shift();
+      if (next !== undefined) {
+        await next();
+      } else {
+        await wake.done;
+        wake = pending();
+      }
+    }
   });
   const entered = await Promise.race([inside.done.then(() => true), outcome.then(() => false)]);
   if (!entered) throw new Error(`the lock on ${orgId} was already taken`);
+
   return {
+    run<T>(piece: () => Promise<T>): Promise<T> {
+      return new Promise<T>((resolve, reject) => {
+        work.push(() => piece().then(resolve, reject));
+        wake.finish();
+      });
+    },
     async leave() {
-      exit.finish();
+      leaving = true;
+      wake.finish();
       return outcome;
     },
   };

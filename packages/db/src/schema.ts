@@ -48,6 +48,8 @@ export const orgs = holdfast
       nextSeq: integer('next_seq').notNull().default(1),
       lastDigest: text('last_digest').$type<Hex>().notNull().default(ZERO_ROOT),
       tickLeaseUntil: epochMs('tick_lease_until'),
+      /** Minted afresh each time the lease is taken; a write made under an older one is refused. */
+      tickLeaseToken: uuid('tick_lease_token'),
       monthlyBurnUsd: doublePrecision('monthly_burn_usd'),
       publicDemo: boolean('public_demo').notNull().default(false),
     },

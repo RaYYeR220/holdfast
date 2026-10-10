@@ -1,9 +1,21 @@
 import { ZERO_ROOT } from '@holdfast/core';
 import { type TickDeps, tick, verifyChain } from '@holdfast/engine';
 import { inArray } from 'drizzle-orm';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { type PostgresConnection, connect, journal, migrate, orders, orgs, zcashFees, zcashNotes, zcashOutgoing } from '../src';
-import { entryOf, storeContract } from './store-contract';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import {
+  LeaseLostError,
+  type PgStoreOptions,
+  type PostgresConnection,
+  connect,
+  journal,
+  migrate,
+  orders,
+  orgs,
+  zcashFees,
+  zcashNotes,
+  zcashOutgoing,
+} from '../src';
+import { entryOf, scanOf, storeContract } from './store-contract';
 import { BIRTHDAY, Chain, Clock, Venue, contend, note, occupy, reference } from './support/fakes';
 import { STARTUP_TIMEOUT_MS, pgUnderTest } from './support/stores';
 
@@ -20,8 +32,8 @@ describe.skipIf(url === undefined)('PgStore on Postgres', () => {
   let connection: PostgresConnection;
   const created: string[] = [];
 
-  const underTest = (clock?: Clock) => {
-    const under = pgUnderTest(connection.db, clock === undefined ? {} : { now: clock.now });
+  const underTest = (options: Partial<PgStoreOptions> = {}) => {
+    const under = pgUnderTest(connection.db, options);
     return {
       ...under,
       async addOrg(id?: string) {
@@ -125,15 +137,63 @@ describe.skipIf(url === undefined)('PgStore on Postgres', () => {
     expect(await store.loadOrg(org)).toMatchObject({ nextSeq: 2, lastDigest: entry.digest });
   });
 
-  it('gives a lease left by a dead tick to the next one once it has run out', async () => {
-    const clock = new Clock();
-    const { store, addOrg } = underTest(clock);
+  it('gives a lease left by a dead tick to exactly one of those waiting, once the server says it has run out', async () => {
+    const { store, addOrg } = underTest({ leaseMs: 1_000 });
     const org = await addOrg();
     await occupy(store, org);
     expect(await store.withOrgLock(org, async () => 1)).toEqual({ ran: false });
 
-    clock.advance(120_001);
+    await new Promise((resolve) => setTimeout(resolve, 1_300));
     const outcomes = await contend(WRITERS, (hold) => store.withOrgLock(org, hold));
     expect(outcomes.filter((o) => o.ran)).toHaveLength(1);
+  });
+
+  it('times the lease by the server, whatever this process believes the time to be', async () => {
+    const { store, addOrg } = underTest({ leaseMs: 1_000 });
+    const org = await addOrg();
+    const started = Date.now();
+    const believed = vi.spyOn(Date, 'now');
+    try {
+      const holder = await occupy(store, org);
+
+      // A day ahead: by its own clock the lease ran out long ago.
+      believed.mockReturnValue(started + 86_400_000);
+      expect(await store.withOrgLock(org, async () => 'stolen')).toEqual({ ran: false });
+      await holder.run(() => store.commitScan(org, scanOf(BIRTHDAY, BIRTHDAY + 50, { notes: [note(BIRTHDAY + 10, 1_000n)] })));
+
+      // A day behind: by its own clock the lease has hardly begun.
+      believed.mockReturnValue(started - 86_400_000);
+      await new Promise((resolve) => setTimeout(resolve, 1_300));
+      await expect(holder.run(() => store.appendJournal(entryOf(org, 1, ZERO_ROOT)))).rejects.toBeInstanceOf(LeaseLostError);
+      await expect(holder.run(() => store.commitScan(org, scanOf(BIRTHDAY, BIRTHDAY + 90)))).rejects.toBeInstanceOf(LeaseLostError);
+      expect(await store.withOrgLock(org, async () => 'taken over')).toEqual({ ran: true, value: 'taken over' });
+
+      expect(await store.journalRange(org, 1, 9)).toEqual([]);
+      expect(await store.notes(org)).toHaveLength(1);
+      expect(await store.loadOrg(org)).toMatchObject({ scannedTo: BIRTHDAY + 50, nextSeq: 1 });
+    } finally {
+      believed.mockRestore();
+    }
+  });
+
+  it('refuses the writes of a tick whose lease another tick has taken, on separate connections', async () => {
+    const clock = new Clock();
+    const { store, addOrg } = underTest({ clockForTests: clock.now });
+    const org = await addOrg();
+    const late = await occupy(store, org);
+    clock.advance(120_001);
+    const successor = await occupy(store, org);
+
+    const entry = entryOf(org, 1, ZERO_ROOT);
+    const outcomes = await Promise.allSettled([
+      ...Array.from({ length: WRITERS - 1 }, () => late.run(() => store.appendJournal(entry))),
+      successor.run(() => store.appendJournal(entry)),
+    ]);
+    expect(outcomes.filter((o) => o.status === 'fulfilled')).toHaveLength(1);
+    expect(outcomes.at(-1)?.status).toBe('fulfilled');
+    for (const refused of outcomes.slice(0, -1)) {
+      expect(refused.status === 'rejected' ? refused.reason : null).toBeInstanceOf(LeaseLostError);
+    }
+    expect(await store.journalRange(org, 1, 9)).toEqual([entry]);
   });
 });

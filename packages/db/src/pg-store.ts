@@ -1,6 +1,8 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { randomUUID } from 'node:crypto';
 import type { OutgoingPayment, OwnedNote, Policy, Zat } from '@holdfast/core';
 import type { JournalEntry, OrderRecord, OrgState, ScanCommit, Store } from '@holdfast/engine';
-import { type SQL, and, asc, between, desc, eq, getTableColumns, inArray, isNotNull, isNull, lt, not, or, sql } from 'drizzle-orm';
+import { type SQL, and, asc, between, desc, eq, getTableColumns, gt, inArray, isNotNull, isNull, lt, not, or, sql } from 'drizzle-orm';
 import type { PgColumn, PgTable } from 'drizzle-orm/pg-core';
 import type { Database } from './client';
 import { decryptSecret, encryptSecret } from './crypto';
@@ -14,9 +16,31 @@ const BATCH = 500;
 export interface PgStoreOptions {
   /** The 32-byte key viewing keys are encrypted under at rest. */
   masterKey: Uint8Array;
-  /** How long a tick may hold an organisation before another may take it over, ms. */
+  /**
+   * How long a tick may hold an organisation, ms. It has to outlast the
+   * longest tick: once it runs out the tick can no longer write.
+   */
   leaseMs?: number;
-  now?: () => number;
+  /**
+   * Tests only. Leases are timed by the database's clock, so that an instance
+   * whose own clock is fast or slow can neither take one early nor hold one
+   * late; this puts a clock the test controls in the database's place.
+   */
+  clockForTests?: () => number;
+}
+
+/**
+ * A tick tried to write after its lease ran out or passed to another tick.
+ * Nothing was written.
+ */
+export class LeaseLostError extends Error {
+  readonly orgId: string;
+
+  constructor(orgId: string) {
+    super(`the tick lease on ${orgId} was lost; nothing was written`);
+    this.name = 'LeaseLostError';
+    this.orgId = orgId;
+  }
 }
 
 export interface NewOrg {
@@ -101,7 +125,13 @@ export class PgStore implements Store {
   private readonly db: Database;
   private readonly masterKey: Uint8Array;
   private readonly leaseMs: number;
-  private readonly now: () => number;
+  private readonly clockForTests: (() => number) | undefined;
+  /**
+   * The lease tokens of the `withOrgLock` calls this code is running inside,
+   * by organisation. It follows the call, not the store: two ticks of one
+   * organisation overlapping on the same store each see only their own.
+   */
+  private readonly leases = new AsyncLocalStorage<ReadonlyMap<string, string>>();
 
   constructor(db: Database, options: PgStoreOptions) {
     const leaseMs = options.leaseMs ?? DEFAULT_LEASE_MS;
@@ -109,7 +139,13 @@ export class PgStore implements Store {
     this.db = db;
     this.masterKey = options.masterKey;
     this.leaseMs = leaseMs;
-    this.now = options.now ?? Date.now;
+    this.clockForTests = options.clockForTests;
+  }
+
+  /** The moment leases are judged against: the database's, whatever time this process thinks it is. */
+  private clock(): SQL {
+    if (this.clockForTests === undefined) return sql`clock_timestamp()`;
+    return sql`${new Date(this.clockForTests()).toISOString()}::timestamptz`;
   }
 
   async createOrg(init: NewOrg): Promise<void> {
@@ -118,7 +154,7 @@ export class PgStore implements Store {
       .values({
         id: init.id,
         name: init.name,
-        createdAt: this.now(),
+        createdAt: this.clockForTests?.(),
         ufvkEnc: encryptSecret(init.ufvk, this.masterKey, ufvkContext(init.id)),
         birthday: init.birthday,
         hlUser: init.hlUser,
@@ -164,42 +200,62 @@ export class PgStore implements Store {
    * The lock is a lease written on the organisation's row: taking it is one
    * conditional update, so it needs no session, and a tick that dies holding
    * it loses it when the lease runs out.
+   *
+   * Taking it also writes a fresh token on the row. What `fn` then writes
+   * through `commitScan` and `appendJournal` lands only while that token is
+   * still there and the lease has not run out, so a tick that outlives its
+   * lease cannot write over the one that took its place.
    */
   async withOrgLock<T>(orgId: string, fn: () => Promise<T>): Promise<{ ran: true; value: T } | { ran: false }> {
-    const until = await this.takeLease(orgId);
-    if (until === null) return { ran: false };
+    const token = await this.takeLease(orgId);
+    if (token === null) return { ran: false };
+    const held = new Map(this.leases.getStore()).set(orgId, token);
     let value: T;
     try {
-      value = await fn();
+      value = await this.leases.run(held, fn);
     } catch (error) {
       // The caller needs to see why the tick failed; a lease that cannot be
       // handed back here simply runs out.
-      await this.dropLease(orgId, until).catch(() => undefined);
+      await this.dropLease(orgId, token).catch(() => undefined);
       throw error;
     }
-    await this.dropLease(orgId, until);
+    await this.dropLease(orgId, token);
     return { ran: true, value };
   }
 
-  private async takeLease(orgId: string): Promise<number | null> {
-    const now = this.now();
-    const until = now + this.leaseMs;
+  private async takeLease(orgId: string): Promise<string | null> {
+    const token = randomUUID();
+    const now = this.clock();
     const taken = await this.db
       .update(orgs)
-      .set({ tickLeaseUntil: until })
+      .set({
+        tickLeaseUntil: sql`${now} + ${this.leaseMs}::double precision * interval '1 millisecond'`,
+        tickLeaseToken: token,
+      })
       .where(and(eq(orgs.id, orgId), or(isNull(orgs.tickLeaseUntil), lt(orgs.tickLeaseUntil, now))))
       .returning({ id: orgs.id });
-    if (taken.length > 0) return until;
+    if (taken.length > 0) return token;
     await this.requireOrg(orgId);
     return null;
   }
 
   /** Only the lease this caller took: one that expired may already belong to the next tick. */
-  private async dropLease(orgId: string, until: number): Promise<void> {
+  private async dropLease(orgId: string, token: string): Promise<void> {
     await this.db
       .update(orgs)
-      .set({ tickLeaseUntil: null })
-      .where(and(eq(orgs.id, orgId), eq(orgs.tickLeaseUntil, until)));
+      .set({ tickLeaseUntil: null, tickLeaseToken: null })
+      .where(and(eq(orgs.id, orgId), eq(orgs.tickLeaseToken, token)));
+  }
+
+  /**
+   * What must still be true of the organisation's row for a write made inside
+   * `withOrgLock` to land. Nothing when the caller holds no lease: a write
+   * made outside a tick is not a tick's write.
+   */
+  private fence(orgId: string): SQL | undefined {
+    const token = this.leases.getStore()?.get(orgId);
+    if (token === undefined) return undefined;
+    return and(eq(orgs.tickLeaseToken, token), gt(orgs.tickLeaseUntil, this.clock()));
   }
 
   private async requireOrg(orgId: string): Promise<void> {
@@ -258,15 +314,20 @@ export class PgStore implements Store {
       zat: fee.zat,
     }));
 
+    const fence = this.fence(orgId);
     await this.db.transaction(async (tx) => {
-      // First, so that an unknown organisation fails here and two scans of the
-      // same organisation queue on its row.
+      // First, so that the rest happens only if this did. It locks the row
+      // until the transaction ends: the lease cannot change hands half way
+      // through, and two scans of one organisation queue here.
       const updated = await tx
         .update(orgs)
         .set({ scannedTo: scan.to, tipHeight: scan.tip.height, tipSince: scan.tip.since })
-        .where(eq(orgs.id, orgId))
+        .where(and(eq(orgs.id, orgId), fence))
         .returning({ id: orgs.id });
-      if (updated.length === 0) throw unknownOrg(orgId);
+      if (updated.length === 0) {
+        const found = await tx.select({ id: orgs.id }).from(orgs).where(eq(orgs.id, orgId));
+        throw found.length === 0 ? unknownOrg(orgId) : new LeaseLostError(orgId);
+      }
 
       await tx.delete(zcashNotes).where(and(eq(zcashNotes.orgId, orgId), between(zcashNotes.height, scan.from, scan.to)));
       await tx.delete(zcashOutgoing).where(and(eq(zcashOutgoing.orgId, orgId), between(zcashOutgoing.height, scan.from, scan.to)));
@@ -344,17 +405,23 @@ export class PgStore implements Store {
   }
 
   async appendJournal(entry: JournalEntry): Promise<void> {
+    const fence = this.fence(entry.orgId);
     await this.db.transaction(async (tx) => {
       // Compare-and-set: the sequence only moves if this entry is the next
-      // one, and a second writer waits on the row and then finds it moved.
+      // one and the writer still holds its lease. A second writer waits on
+      // the row and then finds it moved.
       const advanced = await tx
         .update(orgs)
         .set({ nextSeq: entry.seq + 1, lastDigest: entry.digest })
-        .where(and(eq(orgs.id, entry.orgId), eq(orgs.nextSeq, entry.seq), eq(orgs.lastDigest, entry.prev)))
+        .where(and(eq(orgs.id, entry.orgId), eq(orgs.nextSeq, entry.seq), eq(orgs.lastDigest, entry.prev), fence))
         .returning({ id: orgs.id });
       if (advanced.length === 0) {
-        const [org] = await tx.select({ nextSeq: orgs.nextSeq }).from(orgs).where(eq(orgs.id, entry.orgId));
+        const [org] = await tx
+          .select({ nextSeq: orgs.nextSeq, leaseHeld: fence === undefined ? sql<boolean>`true` : sql<boolean | null>`${fence}` })
+          .from(orgs)
+          .where(eq(orgs.id, entry.orgId));
         if (org === undefined) throw unknownOrg(entry.orgId);
+        if (org.leaseHeld !== true) throw new LeaseLostError(entry.orgId);
         if (entry.seq !== org.nextSeq) throw new Error(`journal entry ${entry.seq} is out of sequence, expected ${org.nextSeq}`);
         throw new Error(`journal entry ${entry.seq} does not follow the last entry`);
       }
