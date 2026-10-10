@@ -1,0 +1,19 @@
+node_modules/
+dist/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+.vercel/
+.turbo/
+.DS_Store
+Thumbs.db
+*.log
+
+# contracts
+contracts/out/
+contracts/cache/
+contracts/broadcast/
