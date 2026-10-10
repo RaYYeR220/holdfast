@@ -6,21 +6,46 @@ import type { Zat } from './units';
  * interfaces.
  */
 
-export interface Receipt {
+export type ShieldedPool = 'sapling' | 'orchard' | 'ironwood';
+
+/** A note the treasury owns: money that came in, or change from its own spend. */
+export interface OwnedNote {
+  /** Stable identity of the note across rescans. */
+  id: string;
   txid: string;
   height: number;
   /** Block time, ms. */
   time: number;
   zat: Zat;
   memo: string;
-  pool: 'sapling' | 'orchard' | 'ironwood';
-  /** Present when the viewing key can derive it; used to notice spends. */
+  pool: ShieldedPool;
+  kind: 'incoming' | 'change';
+  /**
+   * Lets a later scan notice the spend. Null for pools where the viewing key
+   * cannot derive it here; such notes are counted but their spends are not seen.
+   */
   nullifier: string | null;
+  /** Spent later inside the same scanned range. */
+  spent: boolean;
+}
+
+/** Value the treasury sent out, as far as a viewing key can tell. */
+export interface OutgoingPayment {
+  id: string;
+  txid: string;
+  height: number;
+  time: number;
+  zat: Zat;
+  memo: string;
+  pool: ShieldedPool | 'transparent';
 }
 
 export interface ScanResult {
-  receipts: Receipt[];
-  /** Nullifiers of known notes that were spent in the scanned range. */
+  notes: OwnedNote[];
+  outgoing: OutgoingPayment[];
+  /** Fees paid by transactions the treasury sent. */
+  fees: { txid: string; zat: Zat }[];
+  /** Nullifiers of previously known notes that were spent in the scanned range. */
   spentNullifiers: string[];
 }
 
