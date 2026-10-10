@@ -1,0 +1,103 @@
+{
+  "user": "0x96b02a09fadb7af1dcaf0f59340f1766836cf0f6",
+  "userAbstraction": "disabled",
+  "clearinghouseState": {
+    "marginSummary": {
+      "accountValue": "44499.840775",
+      "totalNtlPos": "3249.377493",
+      "totalRawUsd": "43184.221794",
+      "totalMarginUsed": "649.875497"
+    },
+    "crossMarginSummary": {
+      "accountValue": "44499.840775",
+      "totalNtlPos": "3249.377493",
+      "totalRawUsd": "43184.221794",
+      "totalMarginUsed": "649.875497"
+    },
+    "crossMaintenanceMarginUsed": "257.565984",
+    "withdrawable": "42849.567137",
+    "assetPositions": [
+      {
+        "type": "oneWay",
+        "position": {
+          "coin": "DYDX",
+          "szi": "1352.4",
+          "leverage": {
+            "type": "cross",
+            "value": 5
+          },
+          "entryPx": "0.13907",
+          "positionValue": "187.71312",
+          "unrealizedPnl": "-0.377647",
+          "returnOnEquity": "-0.0100389564",
+          "liquidationPx": null,
+          "marginUsed": "37.542624",
+          "maxLeverage": 5,
+          "cumFunding": {
+            "allTime": "-0.936682",
+            "sinceOpen": "0.0",
+            "sinceChange": "0.0"
+          }
+        }
+      },
+      {
+        "type": "oneWay",
+        "position": {
+          "coin": "ZEC",
+          "szi": "0.31",
+          "leverage": {
+            "type": "cross",
+            "value": 5
+          },
+          "entryPx": "1227.9253",
+          "positionValue": "380.556",
+          "unrealizedPnl": "-0.100864",
+          "returnOnEquity": "-0.0013248677",
+          "liquidationPx": null,
+          "marginUsed": "76.1112",
+          "maxLeverage": 10,
+          "cumFunding": {
+            "allTime": "3.510055",
+            "sinceOpen": "0.0",
+            "sinceChange": "0.0"
+          }
+        }
+      },
+      {
+        "type": "oneWay",
+        "position": {
+          "coin": "OP",
+          "szi": "787.3",
+          "leverage": {
+            "type": "cross",
+            "value": 5
+          },
+          "entryPx": "0.13537",
+          "positionValue": "106.710642",
+          "unrealizedPnl": "0.1337",
+          "returnOnEquity": "0.0062724637",
+          "liquidationPx": null,
+          "marginUsed": "21.342128",
+          "maxLeverage": 5,
+          "cumFunding": {
+            "allTime": "0.176366",
+            "sinceOpen": "0.0",
+            "sinceChange": "0.0"
+          }
+        }
+      }
+    ],
+    "time": 1791635941809
+  },
+  "spotClearinghouseState": {
+    "balances": [
+      {
+        "coin": "USDC",
+        "token": 0,
+        "total": "0.0",
+        "hold": "0.0",
+        "entryNtl": "0.0"
+      }
+    ]
+  }
+}

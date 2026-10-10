@@ -1,0 +1,21 @@
+[
+  {
+    "coin": "ZEC",
+    "px": "1227.5",
+    "sz": "0.04",
+    "side": "A",
+    "time": 1791635338038,
+    "startPosition": "-0.32",
+    "dir": "Open Short",
+    "closedPnl": "0.0",
+    "hash": "0x16bcdeb415c20dd21836044640f6be02015e0099b0c52ca4ba858a06d4c5e7bc",
+    "oid": 570527861065,
+    "crossed": true,
+    "fee": "0.045761",
+    "builderFee": "0.02455",
+    "tid": 6116702773395,
+    "cloid": "0x5048120a000002587211f6e3dd5fa44f",
+    "feeToken": "USDC",
+    "twapId": null
+  }
+]

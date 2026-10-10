@@ -1,0 +1,25 @@
+{
+  "status": "order",
+  "order": {
+    "order": {
+      "coin": "ZEC",
+      "side": "A",
+      "limitPx": "1105.1",
+      "sz": "0.0",
+      "oid": 570527861065,
+      "timestamp": 1791635338038,
+      "triggerCondition": "N/A",
+      "isTrigger": false,
+      "triggerPx": "0.0",
+      "children": [],
+      "isPositionTpsl": false,
+      "reduceOnly": false,
+      "orderType": "Limit",
+      "origSz": "0.04",
+      "tif": "Ioc",
+      "cloid": "0x5048120a000002587211f6e3dd5fa44f"
+    },
+    "status": "filled",
+    "statusTimestamp": 1791635338038
+  }
+}

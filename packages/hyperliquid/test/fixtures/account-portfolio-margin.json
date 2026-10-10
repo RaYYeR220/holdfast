@@ -1,0 +1,152 @@
+{
+  "user": "0x563bf0731cf71ad7cea05b9c48a802d8c53e7dc4",
+  "userAbstraction": "portfolioMargin",
+  "clearinghouseState": {
+    "marginSummary": {
+      "accountValue": "253559.751315",
+      "totalNtlPos": "857431.7922",
+      "totalRawUsd": "-412186.048847",
+      "totalMarginUsed": "253563.220496"
+    },
+    "crossMarginSummary": {
+      "accountValue": "253559.751315",
+      "totalNtlPos": "857431.7922",
+      "totalRawUsd": "-412186.048847",
+      "totalMarginUsed": "253563.220496"
+    },
+    "crossMaintenanceMarginUsed": "61630.687754",
+    "withdrawable": "0.0",
+    "assetPositions": [
+      {
+        "type": "oneWay",
+        "position": {
+          "coin": "BTC",
+          "szi": "0.00001",
+          "leverage": {
+            "type": "cross",
+            "value": 10
+          },
+          "entryPx": "64125.1",
+          "positionValue": "0.82783",
+          "unrealizedPnl": "0.186579",
+          "returnOnEquity": "2.9096094977",
+          "liquidationPx": null,
+          "marginUsed": "0.082783",
+          "maxLeverage": 40,
+          "cumFunding": {
+            "allTime": "1218.453208",
+            "sinceOpen": "824.669657",
+            "sinceChange": "0.011059"
+          }
+        }
+      },
+      {
+        "type": "oneWay",
+        "position": {
+          "coin": "ZEC",
+          "szi": "444.61",
+          "leverage": {
+            "type": "cross",
+            "value": 3
+          },
+          "entryPx": "1180.3569",
+          "positionValue": "545803.236",
+          "unrealizedPnl": "21004.740182",
+          "returnOnEquity": "0.1200731729",
+          "liquidationPx": null,
+          "marginUsed": "181934.412",
+          "maxLeverage": 10,
+          "cumFunding": {
+            "allTime": "666.101233",
+            "sinceOpen": "666.101233",
+            "sinceChange": "0.0"
+          }
+        }
+      },
+      {
+        "type": "oneWay",
+        "position": {
+          "coin": "UNI",
+          "szi": "3215.2",
+          "leverage": {
+            "type": "cross",
+            "value": 10
+          },
+          "entryPx": "8.31263",
+          "positionValue": "24159.302168",
+          "unrealizedPnl": "-2567.467901",
+          "returnOnEquity": "-0.9606353085",
+          "liquidationPx": null,
+          "marginUsed": "2415.930216",
+          "maxLeverage": 10,
+          "cumFunding": {
+            "allTime": "1489.465305",
+            "sinceOpen": "1489.465305",
+            "sinceChange": "12.986033"
+          }
+        }
+      }
+    ],
+    "time": 1791635943826
+  },
+  "spotClearinghouseState": {
+    "portfolioMarginEnabled": true,
+    "balances": [
+      {
+        "coin": "USDC",
+        "token": 0,
+        "total": "284586.7022231796",
+        "hold": "177847.3122751897",
+        "entryNtl": "0.0",
+        "spotHold": "284586.7022231796",
+        "ltv": "0.0",
+        "borrowed": "1162499.70765083"
+      },
+      {
+        "coin": "HPL",
+        "token": 120,
+        "total": "3711709.7161560101",
+        "hold": "0.0",
+        "entryNtl": "48847.1093822"
+      },
+      {
+        "coin": "KNTQ",
+        "token": 124,
+        "total": "153796.74165919",
+        "hold": "0.0",
+        "entryNtl": "49173.04268792"
+      }
+    ],
+    "portfolioMarginRatio": "0.4496711321",
+    "tokenToPortfolioBorrowRatio": [
+      [
+        0,
+        "0.0232499942"
+      ],
+      [
+        268,
+        "0.0"
+      ]
+    ],
+    "tokenToPortfolioSupplyRatio": [
+      [
+        150,
+        "0.0219785353"
+      ],
+      [
+        197,
+        "0.0078650058"
+      ]
+    ],
+    "tokenToAvailableAfterMaintenance": [
+      [
+        0,
+        "986679.13891199"
+      ],
+      [
+        150,
+        "14189.06373099"
+      ]
+    ]
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "status": "order",
+  "order": {
+    "order": {
+      "coin": "xyz:CL",
+      "side": "A",
+      "limitPx": "84.845",
+      "sz": "0.103",
+      "oid": 557661194000,
+      "timestamp": 1790478224633,
+      "triggerCondition": "N/A",
+      "isTrigger": false,
+      "triggerPx": "0.0",
+      "children": [],
+      "isPositionTpsl": false,
+      "reduceOnly": false,
+      "orderType": "Limit",
+      "origSz": "0.103",
+      "tif": "Ioc",
+      "cloid": "0x50481102000001ea3472825f9bc19cd5"
+    },
+    "status": "minTradeNtlRejected",
+    "statusTimestamp": 1790478224633
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "user": "0xda22459d4776c240e9182be9e569f07617cef664",
+  "userAbstraction": "disabled",
+  "clearinghouseState": {
+    "marginSummary": {
+      "accountValue": "1893.077482",
+      "totalNtlPos": "1362.636",
+      "totalRawUsd": "3255.713482",
+      "totalMarginUsed": "136.2636"
+    },
+    "crossMarginSummary": {
+      "accountValue": "1893.077482",
+      "totalNtlPos": "1362.636",
+      "totalRawUsd": "3255.713482",
+      "totalMarginUsed": "136.2636"
+    },
+    "crossMaintenanceMarginUsed": "68.1318",
+    "withdrawable": "1643.874682",
+    "assetPositions": [
+      {
+        "type": "oneWay",
+        "position": {
+          "coin": "ZEC",
+          "szi": "-1.11",
+          "leverage": {
+            "type": "cross",
+            "value": 10
+          },
+          "entryPx": "1227.6",
+          "positionValue": "1362.636",
+          "unrealizedPnl": "0.0",
+          "returnOnEquity": "0.0",
+          "liquidationPx": "2793.404960961",
+          "marginUsed": "136.2636",
+          "maxLeverage": 10,
+          "cumFunding": {
+            "allTime": "-2.254917",
+            "sinceOpen": "0.0",
+            "sinceChange": "0.0"
+          }
+        }
+      }
+    ],
+    "time": 1791635941491
+  },
+  "spotClearinghouseState": {
+    "balances": [
+      {
+        "coin": "USDC",
+        "token": 0,
+        "total": "0.0",
+        "hold": "0.0",
+        "entryNtl": "0.0"
+      }
+    ]
+  }
+}
