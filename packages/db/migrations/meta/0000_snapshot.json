@@ -1,0 +1,1359 @@
+{
+  "id": "cd0796c0-44b1-4efe-a50b-019250b9bd9d",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "holdfast.audit_links": {
+      "name": "audit_links",
+      "schema": "holdfast",
+      "columns": {
+        "token_hash": {
+          "name": "token_hash",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "org_id": {
+          "name": "org_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "label": {
+          "name": "label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "scope": {
+          "name": "scope",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "revoked_at": {
+          "name": "revoked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "audit_links_org_idx": {
+          "name": "audit_links_org_idx",
+          "columns": [
+            {
+              "expression": "org_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "audit_links_org_id_orgs_id_fk": {
+          "name": "audit_links_org_id_orgs_id_fk",
+          "tableFrom": "audit_links",
+          "tableTo": "orgs",
+          "schemaTo": "holdfast",
+          "columnsFrom": [
+            "org_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": true
+    },
+    "holdfast.journal": {
+      "name": "journal",
+      "schema": "holdfast",
+      "columns": {
+        "org_id": {
+          "name": "org_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "seq": {
+          "name": "seq",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "at": {
+          "name": "at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "prev": {
+          "name": "prev",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "digest": {
+          "name": "digest",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "entry": {
+          "name": "entry",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "mode": {
+          "name": "mode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "has_order": {
+          "name": "has_order",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "journal_org_id_orgs_id_fk": {
+          "name": "journal_org_id_orgs_id_fk",
+          "tableFrom": "journal",
+          "tableTo": "orgs",
+          "schemaTo": "holdfast",
+          "columnsFrom": [
+            "org_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "journal_org_id_seq_pk": {
+          "name": "journal_org_id_seq_pk",
+          "columns": [
+            "org_id",
+            "seq"
+          ]
+        }
+      },
+      "uniqueConstraints": {
+        "journal_digest_key": {
+          "name": "journal_digest_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "org_id",
+            "digest"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": true
+    },
+    "holdfast.keys": {
+      "name": "keys",
+      "schema": "holdfast",
+      "columns": {
+        "org_id": {
+          "name": "org_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "address": {
+          "name": "address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "secret_enc": {
+          "name": "secret_enc",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "revoked_at": {
+          "name": "revoked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "keys_org_id_orgs_id_fk": {
+          "name": "keys_org_id_orgs_id_fk",
+          "tableFrom": "keys",
+          "tableTo": "orgs",
+          "schemaTo": "holdfast",
+          "columnsFrom": [
+            "org_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "keys_org_id_kind_address_pk": {
+          "name": "keys_org_id_kind_address_pk",
+          "columns": [
+            "org_id",
+            "kind",
+            "address"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "keys_kind_is_known": {
+          "name": "keys_kind_is_known",
+          "value": "\"holdfast\".\"keys\".\"kind\" in ('hl_agent', 'tempo_access', 'tempo_sponsor', 'solana_delegate')"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "holdfast.orders": {
+      "name": "orders",
+      "schema": "holdfast",
+      "columns": {
+        "org_id": {
+          "name": "org_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "seq": {
+          "name": "seq",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "cloid": {
+          "name": "cloid",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "side": {
+          "name": "side",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "lots": {
+          "name": "lots",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "limit_px": {
+          "name": "limit_px",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reduce_only": {
+          "name": "reduce_only",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ok": {
+          "name": "ok",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "filled_lots": {
+          "name": "filled_lots",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "avg_px": {
+          "name": "avg_px",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "oid": {
+          "name": "oid",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "error": {
+          "name": "error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "orders_seq_idx": {
+          "name": "orders_seq_idx",
+          "columns": [
+            {
+              "expression": "org_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "seq",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "orders_org_id_seq_journal_org_id_seq_fk": {
+          "name": "orders_org_id_seq_journal_org_id_seq_fk",
+          "tableFrom": "orders",
+          "tableTo": "journal",
+          "schemaTo": "holdfast",
+          "columnsFrom": [
+            "org_id",
+            "seq"
+          ],
+          "columnsTo": [
+            "org_id",
+            "seq"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "orders_org_id_cloid_pk": {
+          "name": "orders_org_id_cloid_pk",
+          "columns": [
+            "org_id",
+            "cloid"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": true
+    },
+    "holdfast.orgs": {
+      "name": "orgs",
+      "schema": "holdfast",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "ufvk_enc": {
+          "name": "ufvk_enc",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "birthday": {
+          "name": "birthday",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "scanned_to": {
+          "name": "scanned_to",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "tip_height": {
+          "name": "tip_height",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "tip_since": {
+          "name": "tip_since",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "hl_user": {
+          "name": "hl_user",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "policy": {
+          "name": "policy",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "lock_enabled": {
+          "name": "lock_enabled",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "next_seq": {
+          "name": "next_seq",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "last_digest": {
+          "name": "last_digest",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0x0000000000000000000000000000000000000000000000000000000000000000'"
+        },
+        "tick_lease_until": {
+          "name": "tick_lease_until",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "monthly_burn_usd": {
+          "name": "monthly_burn_usd",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "public_demo": {
+          "name": "public_demo",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "orgs_tip_is_whole": {
+          "name": "orgs_tip_is_whole",
+          "value": "(\"holdfast\".\"orgs\".\"tip_height\" is null) = (\"holdfast\".\"orgs\".\"tip_since\" is null)"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "holdfast.payout_lines": {
+      "name": "payout_lines",
+      "schema": "holdfast",
+      "columns": {
+        "run_id": {
+          "name": "run_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "line_no": {
+          "name": "line_no",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payee_name": {
+          "name": "payee_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "to_address": {
+          "name": "to_address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount": {
+          "name": "amount",
+          "type": "numeric(78, 0)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "memo": {
+          "name": "memo",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tx": {
+          "name": "tx",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "log_index": {
+          "name": "log_index",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reconciled": {
+          "name": "reconciled",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "payout_lines_run_id_payout_runs_id_fk": {
+          "name": "payout_lines_run_id_payout_runs_id_fk",
+          "tableFrom": "payout_lines",
+          "tableTo": "payout_runs",
+          "schemaTo": "holdfast",
+          "columnsFrom": [
+            "run_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "payout_lines_run_id_line_no_pk": {
+          "name": "payout_lines_run_id_line_no_pk",
+          "columns": [
+            "run_id",
+            "line_no"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": true
+    },
+    "holdfast.payout_runs": {
+      "name": "payout_runs",
+      "schema": "holdfast",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "org_id": {
+          "name": "org_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "chain": {
+          "name": "chain",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "token": {
+          "name": "token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "total": {
+          "name": "total",
+          "type": "numeric(78, 0)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tx": {
+          "name": "tx",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "error": {
+          "name": "error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "signed_tx": {
+          "name": "signed_tx",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "executed_at": {
+          "name": "executed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "payout_runs_org_idx": {
+          "name": "payout_runs_org_idx",
+          "columns": [
+            {
+              "expression": "org_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "payout_runs_org_id_orgs_id_fk": {
+          "name": "payout_runs_org_id_orgs_id_fk",
+          "tableFrom": "payout_runs",
+          "tableTo": "orgs",
+          "schemaTo": "holdfast",
+          "columnsFrom": [
+            "org_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "payout_runs_chain_is_known": {
+          "name": "payout_runs_chain_is_known",
+          "value": "\"holdfast\".\"payout_runs\".\"chain\" in ('tempo', 'solana')"
+        },
+        "payout_runs_status_is_known": {
+          "name": "payout_runs_status_is_known",
+          "value": "\"holdfast\".\"payout_runs\".\"status\" in ('draft', 'approved', 'sending', 'paid', 'failed', 'refused')"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "holdfast.refusals": {
+      "name": "refusals",
+      "schema": "holdfast",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "org_id": {
+          "name": "org_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "chain": {
+          "name": "chain",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "attempted": {
+          "name": "attempted",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "outcome": {
+          "name": "outcome",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tx": {
+          "name": "tx",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "evidence": {
+          "name": "evidence",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "refusals_org_idx": {
+          "name": "refusals_org_idx",
+          "columns": [
+            {
+              "expression": "org_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "refusals_org_id_orgs_id_fk": {
+          "name": "refusals_org_id_orgs_id_fk",
+          "tableFrom": "refusals",
+          "tableTo": "orgs",
+          "schemaTo": "holdfast",
+          "columnsFrom": [
+            "org_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": true
+    },
+    "holdfast.swaps": {
+      "name": "swaps",
+      "schema": "holdfast",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "org_id": {
+          "name": "org_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "purpose": {
+          "name": "purpose",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "origin_asset": {
+          "name": "origin_asset",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "destination_asset": {
+          "name": "destination_asset",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount_in": {
+          "name": "amount_in",
+          "type": "numeric(78, 0)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "min_amount_out": {
+          "name": "min_amount_out",
+          "type": "numeric(78, 0)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "deposit_address": {
+          "name": "deposit_address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "recipient": {
+          "name": "recipient",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "quote": {
+          "name": "quote",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "origin_txs": {
+          "name": "origin_txs",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "destination_txs": {
+          "name": "destination_txs",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "amount_out": {
+          "name": "amount_out",
+          "type": "numeric(78, 0)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "swaps_org_idx": {
+          "name": "swaps_org_idx",
+          "columns": [
+            {
+              "expression": "org_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "swaps_org_id_orgs_id_fk": {
+          "name": "swaps_org_id_orgs_id_fk",
+          "tableFrom": "swaps",
+          "tableTo": "orgs",
+          "schemaTo": "holdfast",
+          "columnsFrom": [
+            "org_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "swaps_deposit_address_unique": {
+          "name": "swaps_deposit_address_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "deposit_address"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "swaps_purpose_is_known": {
+          "name": "swaps_purpose_is_known",
+          "value": "\"holdfast\".\"swaps\".\"purpose\" in ('margin', 'payout_float', 'unlock')"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "holdfast.zcash_fees": {
+      "name": "zcash_fees",
+      "schema": "holdfast",
+      "columns": {
+        "org_id": {
+          "name": "org_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "txid": {
+          "name": "txid",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "height": {
+          "name": "height",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "zat": {
+          "name": "zat",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "zcash_fees_height_idx": {
+          "name": "zcash_fees_height_idx",
+          "columns": [
+            {
+              "expression": "org_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "height",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "zcash_fees_org_id_orgs_id_fk": {
+          "name": "zcash_fees_org_id_orgs_id_fk",
+          "tableFrom": "zcash_fees",
+          "tableTo": "orgs",
+          "schemaTo": "holdfast",
+          "columnsFrom": [
+            "org_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "zcash_fees_org_id_txid_pk": {
+          "name": "zcash_fees_org_id_txid_pk",
+          "columns": [
+            "org_id",
+            "txid"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": true
+    },
+    "holdfast.zcash_notes": {
+      "name": "zcash_notes",
+      "schema": "holdfast",
+      "columns": {
+        "org_id": {
+          "name": "org_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "txid": {
+          "name": "txid",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "height": {
+          "name": "height",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "time": {
+          "name": "time",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "zat": {
+          "name": "zat",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "memo": {
+          "name": "memo",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "pool": {
+          "name": "pool",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "nullifier": {
+          "name": "nullifier",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "spent": {
+          "name": "spent",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        }
+      },
+      "indexes": {
+        "zcash_notes_height_idx": {
+          "name": "zcash_notes_height_idx",
+          "columns": [
+            {
+              "expression": "org_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "height",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "zcash_notes_unspent_idx": {
+          "name": "zcash_notes_unspent_idx",
+          "columns": [
+            {
+              "expression": "org_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "nullifier",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "not \"holdfast\".\"zcash_notes\".\"spent\"",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "zcash_notes_org_id_orgs_id_fk": {
+          "name": "zcash_notes_org_id_orgs_id_fk",
+          "tableFrom": "zcash_notes",
+          "tableTo": "orgs",
+          "schemaTo": "holdfast",
+          "columnsFrom": [
+            "org_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "zcash_notes_org_id_id_pk": {
+          "name": "zcash_notes_org_id_id_pk",
+          "columns": [
+            "org_id",
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": true
+    },
+    "holdfast.zcash_outgoing": {
+      "name": "zcash_outgoing",
+      "schema": "holdfast",
+      "columns": {
+        "org_id": {
+          "name": "org_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "txid": {
+          "name": "txid",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "height": {
+          "name": "height",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "time": {
+          "name": "time",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "zat": {
+          "name": "zat",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "memo": {
+          "name": "memo",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "pool": {
+          "name": "pool",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "zcash_outgoing_height_idx": {
+          "name": "zcash_outgoing_height_idx",
+          "columns": [
+            {
+              "expression": "org_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "height",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "zcash_outgoing_org_id_orgs_id_fk": {
+          "name": "zcash_outgoing_org_id_orgs_id_fk",
+          "tableFrom": "zcash_outgoing",
+          "tableTo": "orgs",
+          "schemaTo": "holdfast",
+          "columnsFrom": [
+            "org_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "zcash_outgoing_org_id_id_pk": {
+          "name": "zcash_outgoing_org_id_id_pk",
+          "columns": [
+            "org_id",
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": true
+    }
+  },
+  "enums": {},
+  "schemas": {
+    "holdfast": "holdfast"
+  },
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

@@ -7,7 +7,8 @@
   "scripts": {
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -p tsconfig.json",
-    "generate": "drizzle-kit generate"
+    "generate": "drizzle-kit generate && tsx scripts/embed-migrations.ts",
+    "embed-migrations": "tsx scripts/embed-migrations.ts"
   },
   "dependencies": {
     "@holdfast/core": "workspace:*",
