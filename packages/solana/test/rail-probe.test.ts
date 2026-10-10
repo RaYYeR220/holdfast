@@ -1,12 +1,9 @@
 import { isInstructionWithAccounts, isInstructionWithData } from '@solana/kit';
 import { getMemosFromInstructions } from '@solana-program/memo';
-import {
-  ASSOCIATED_TOKEN_PROGRAM_ADDRESS,
-  parseTransferCheckedInstruction,
-  TOKEN_PROGRAM_ADDRESS,
-} from '@solana-program/token';
+import { parseTransferCheckedInstruction, TOKEN_PROGRAM_ADDRESS } from '@solana-program/token';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { MAX_TOKEN_AMOUNT } from '../src/amounts';
+import { PAYOUT_MEMO_PROGRAM_ADDRESS } from '../src/payout';
 import { CONFIRMED, createWorld, decodeWire, OWNER, payee, type World } from './world';
 
 const SIGNATURE = /^[1-9A-HJ-NP-Za-km-z]{64,88}$/;
@@ -90,12 +87,38 @@ describe('probeOverAllowance', () => {
     });
   });
 
-  it('creates the token account of a new payee so the transfer fails for the right reason', async () => {
-    world.answers.transaction = () => ({ ...refused, meta: { err: { InstructionError: [2, { Custom: 1 }] } } });
+  it('never creates a token account: a payee without one is not probed at all', async () => {
     const result = await world.rail.probeOverAllowance({ account: OWNER, to: payee(5) });
-    const { instructions } = decodeWire(world.sent[0]?.wire ?? '');
-    expect(instructions[1]?.programAddress).toBe(ASSOCIATED_TOKEN_PROGRAM_ADDRESS);
-    expect(result.error).toBe('instruction 2 failed: custom program error 0x1 (Token program: InsufficientFunds)');
+    expect(result).toEqual({
+      signature: null,
+      failedOnChain: false,
+      error:
+        `${payee(5)} has no token account for this mint and the probe never creates one; ` +
+        'aim it at a payee that has been paid before or at the team wallet itself',
+    });
+    expect(world.sent).toEqual([]);
+  });
+
+  it('carries only a memo and the transfer, whoever it is aimed at', async () => {
+    world.answers.transaction = () => refused;
+    await probe();
+    await world.rail.probeOverAllowance({ account: OWNER, to: OWNER });
+    for (const { wire } of world.sent) {
+      expect(decodeWire(wire).instructions.map(instruction => instruction.programAddress)).toEqual([
+        PAYOUT_MEMO_PROGRAM_ADDRESS,
+        TOKEN_PROGRAM_ADDRESS,
+      ]);
+    }
+    expect(world.sent).toHaveLength(2);
+  });
+
+  it('reports a target that is not an address without sending', async () => {
+    expect(await world.rail.probeOverAllowance({ account: OWNER, to: 'alice.sol' })).toEqual({
+      signature: null,
+      failedOnChain: false,
+      error: '"alice.sol" is not a Solana address',
+    });
+    expect(world.sent).toEqual([]);
   });
 
   it('can target the team account itself, which no outcome could move tokens out of', async () => {

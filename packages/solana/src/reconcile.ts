@@ -49,8 +49,41 @@ export interface RunIdentity {
   delegate: Address;
 }
 
+/** A line of a run somebody asks to be paid, with the payee's token account already derived. */
+export interface RequestedLine {
+  tokenAccount: Address;
+  amount: bigint;
+  /** Empty for a line without a memo. */
+  memo: string;
+}
+
 const SIGNATURE_PAGE = 1_000;
 const MAX_SIGNATURE_PAGES = 10;
+
+/** A transfer of a paid run, reduced to what identifies it. */
+export type PaidLine = Pick<RunTransfer, 'tokenAccount' | 'amount' | 'memo'>;
+
+/**
+ * Whether a run found on chain is the run being asked for: the same token
+ * accounts and amounts in the same order. Memos are compared too unless the
+ * run on chain carries none, which is what a run looks like when its line
+ * memos did not fit.
+ */
+export function isSameRun(paid: readonly PaidLine[], lines: readonly RequestedLine[]): boolean {
+  const carriesLineMemos = paid.some(transfer => transfer.memo !== null);
+  return (
+    paid.length === lines.length &&
+    paid.every((transfer, index) => {
+      const line = lines[index];
+      return (
+        line !== undefined &&
+        transfer.tokenAccount === line.tokenAccount &&
+        transfer.amount === line.amount &&
+        (!carriesLineMemos || (transfer.memo ?? '') === line.memo)
+      );
+    })
+  );
+}
 
 function delegateTransfer(instruction: ResolvedInstruction, run: RunIdentity) {
   if (instruction.programAddress !== TOKEN_PROGRAM_ADDRESS) return null;

@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { associatedTokenAddress } from '../src/accounts';
 import { PAYOUT_MEMO_PROGRAM_ADDRESS } from '../src/payout';
 import { accountInfo, addressOf, NodeError } from './fake-node';
-import { CONFIRMED, createWorld, decodeWire, MINT, OWNER, payee, type World } from './world';
+import { CONFIRMED, createWorld, decodeWire, MINT, OWNER, payee, TOKEN_ACCOUNT_RENT, type World } from './world';
 
 const RUN_ID = 'HF-2026-10-0001';
 const line = (index: number, amount: bigint, memo = ''): PayoutLine => ({ to: payee(index), amount, memo });
@@ -23,6 +23,11 @@ beforeEach(async () => {
 
 const pay = (lines: PayoutLine[], runId = RUN_ID) => world.rail.pay({ account: OWNER, lines, runId });
 const broadcasts = (): number => world.node.methods().filter(method => method === 'sendTransaction').length;
+const costOf = (newTokenAccounts: number) => ({
+  newTokenAccounts,
+  rentLamports: BigInt(newTokenAccounts * TOKEN_ACCOUNT_RENT),
+  feeLamports: 5_000n,
+});
 
 /** Answer with each value once, then keep repeating the last. */
 function inTurn<T>(values: readonly T[]): () => T | undefined {
@@ -75,11 +80,14 @@ describe('pay: checks before anything is sent', () => {
     const result = await pay([line(0, 5_000_000n), line(1, 750_001n)]);
     expect(result).toEqual({
       ok: false,
+      outcome: 'refused',
       tx: null,
       error: 'exceeds delegated allowance: run needs 5.750001, 5.75 remaining',
+      replayed: false,
       lineMemos: false,
+      cost: null,
     });
-    expect(world.node.methods()).toEqual(['getAccountInfo']);
+    expect(world.node.methods()).toEqual(['getSignaturesForAddress', 'getAccountInfo']);
   });
 
   it('refuses every run once the delegation is gone', async () => {
@@ -133,14 +141,16 @@ describe('pay: checks before anything is sent', () => {
 
   it('refuses a run too large for one transaction instead of splitting it', async () => {
     world.fund({ amount: 100_000_000n, delegate: world.delegate.address, delegatedAmount: 100_000_000n });
-    const lines = Array.from({ length: 10 }, (_, index) => line(index, 1_000n));
+    const lines = Array.from({ length: 20 }, (_, index) => line(index, 1_000n));
+    for (let index = 0; index < lines.length; index++) await world.openTokenAccount(payee(index));
     const result = await pay(lines);
-    expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/^run does not fit in one transaction: 10 lines need about 1256 bytes/);
+    expect(result).toMatchObject({ ok: false, outcome: 'refused', tx: null });
+    expect(result.error).toMatch(/^run does not fit in one transaction: 20 lines need about 1262 bytes/);
     expect(broadcasts()).toBe(0);
   });
 
   it('refuses a run far beyond what any transaction holds', async () => {
+    world = await createWorld({ maxNewTokenAccountsPerRun: 100 });
     world.fund({ amount: 100_000_000n, delegate: world.delegate.address, delegatedAmount: 100_000_000n });
     const lines = Array.from({ length: 70 }, (_, index) => line(index, 1_000n, `INV-${index}`));
     expect((await pay(lines)).error).toMatch(/^run does not fit in one transaction: 70 lines/);
@@ -149,7 +159,7 @@ describe('pay: checks before anything is sent', () => {
 
   it('reports an unreachable node instead of throwing', async () => {
     world.node.unreachable.add('getAccountInfo');
-    expect(await pay([line(0, 1n)])).toEqual({ ok: false, tx: null, error: 'connect ECONNREFUSED', lineMemos: false });
+    expect(await pay([line(0, 1n)])).toMatchObject({ ok: false, outcome: 'refused', tx: null, error: 'connect ECONNREFUSED' });
     await expect(world.rail.remaining(OWNER)).rejects.toThrow('connect ECONNREFUSED');
   });
 
@@ -177,7 +187,15 @@ describe('pay: the transaction it sends', () => {
     if (!sent) throw new Error('nothing was sent');
     const { instructions, signers, accounts } = decodeWire(sent.wire);
 
-    expect(result).toEqual({ ok: true, tx: expect.any(String), error: null, lineMemos: true });
+    expect(result).toEqual({
+      ok: true,
+      outcome: 'paid',
+      tx: decodeWire(sent.wire).signature,
+      error: null,
+      replayed: false,
+      lineMemos: true,
+      cost: costOf(2),
+    });
     expect(signers).toEqual([world.delegate.address]);
     expect(accounts).not.toContain(OWNER);
     expect(sent.config.skipPreflight).toBe(false);
@@ -250,7 +268,7 @@ describe('pay: the transaction it sends', () => {
     }
     const result = await pay(lines);
     const { instructions } = decodeWire(world.sent[0]?.wire ?? '');
-    expect(result).toMatchObject({ ok: true, lineMemos: false });
+    expect(result).toMatchObject({ ok: true, outcome: 'paid', lineMemos: false });
     expect(getMemosFromInstructions(instructions).map(({ memo }) => memo)).toEqual([RUN_ID]);
     expect(instructions).toHaveLength(13);
   });
@@ -266,9 +284,12 @@ describe('pay: what the chain answers', () => {
     const result = await pay([line(0, 1_000_000n)]);
     expect(result).toEqual({
       ok: false,
-      tx: expect.stringMatching(/^[1-9A-HJ-NP-Za-km-z]{64,88}$/),
+      outcome: 'failed',
+      tx: decodeWire(world.sent[0]?.wire ?? '').signature,
       error: 'instruction 2 failed: custom program error 0x1 (Token program: InsufficientFunds)',
+      replayed: false,
       lineMemos: false,
+      cost: costOf(1),
     });
   });
 
@@ -282,9 +303,12 @@ describe('pay: what the chain answers', () => {
     const result = await pay([line(0, 1_000_000n)]);
     expect(result).toEqual({
       ok: false,
+      outcome: 'refused',
       tx: null,
       error: 'simulation failed: instruction 2 failed: custom program error 0x11 (Token program: AccountFrozen)',
+      replayed: false,
       lineMemos: false,
+      cost: costOf(1),
     });
     expect(world.node.methods()).not.toContain('getSignatureStatuses');
   });
@@ -296,13 +320,12 @@ describe('pay: what the chain answers', () => {
     expect(world.node.methods().filter(method => method === 'getSignatureStatuses')).toHaveLength(3);
   });
 
-  it('reports a transaction whose blockhash expired as not paid', async () => {
+  it('reports a transaction whose blockhash provably expired as failed, never as unknown', async () => {
     world.answers.status = () => null;
     world.answers.blockHeight = () => 1_001;
     const result = await pay([line(0, 1_000_000n)]);
-    expect(result.ok).toBe(false);
-    expect(result.tx).toBeNull();
-    expect(result.error).toMatch(/expired before it landed; nothing was paid$/);
+    expect(result).toMatchObject({ ok: false, outcome: 'failed', tx: null });
+    expect(result.error).toMatch(/expired without landing; nothing was paid$/);
   });
 
   it('keeps waiting while the blockhash is still valid, rebroadcasting now and then', async () => {

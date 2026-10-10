@@ -21,12 +21,9 @@ export {
   type PayoutShape,
 } from './capacity';
 export type { RpcSource, SettledCommitment } from './connection';
+export type { SolanaPayoutRailConfig } from './context';
+export type { PayoutCost } from './cost';
 export { MAX_MEMO_LENGTH, parseSignatureMemos, validateMemo } from './memo';
-export {
-  createSolanaPayoutRail,
-  type AllowanceProbe,
-  type SolanaPayoutRail,
-  type SolanaPayoutRailConfig,
-  type SolanaPayoutResult,
-} from './rail';
+export { createSolanaPayoutRail, type SolanaPayoutRail } from './rail';
 export type { PayoutRun, RunTransfer } from './reconcile';
+export type { AllowanceProbe, PayoutOutcome, PayoutPreview, SolanaPayoutResult } from './results';

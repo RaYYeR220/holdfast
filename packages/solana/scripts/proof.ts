@@ -19,6 +19,7 @@ import {
   formatBaseUnits,
   toBaseUnits,
   type AllowanceProbe,
+  type PayoutPreview,
   type PayoutRun,
   type SolanaPayoutResult,
 } from '../src/index';
@@ -51,11 +52,17 @@ export interface ProofReport {
   funding: FundingRecord[];
   steps: ProofStep[];
   remainingAfterApproval: bigint;
+  priced: PayoutPreview;
+  refusedOverAccountLimit: SolanaPayoutResult;
   remainingAfterRun: bigint;
   payout: SolanaPayoutResult;
   run: PayoutRun;
+  replay: SolanaPayoutResult;
+  replayAfterRestart: SolanaPayoutResult;
+  refusedDifferentLines: SolanaPayoutResult;
   refusedBeforeSending: SolanaPayoutResult;
   probe: AllowanceProbe;
+  probeAtNewAddress: AllowanceProbe;
   selfProbe: AllowanceProbe;
   remainingAfterRevoke: bigint;
   refusedAfterRevoke: SolanaPayoutResult;
@@ -125,10 +132,11 @@ export async function runProof(options: ProofOptions): Promise<ProofReport> {
   const rpc = connect(node);
   const cluster = await identifyCluster(rpc, rpcUrl);
   const nodeVersion = (await rpc.getVersion().send())['solana-core'];
-  const { owner, delegate, delegateSecretKey, mint, recipients } = await loadOrCreateKeys(options.keysFile, 3);
+  const { owner, delegate, delegateSecretKey, mint, recipients } = await loadOrCreateKeys(options.keysFile, 4);
   const ownerTokenAccount = await associatedTokenAddress(owner.address, mint.address);
-  const [first, second, third] = recipients.map(recipient => recipient.address);
-  assert.ok(first && second && third);
+  // Three payees, and a fourth address that never gets a token account.
+  const [first, second, third, stranger] = recipients.map(recipient => recipient.address);
+  assert.ok(first && second && third && stranger);
   const amount = (decimal: string): bigint => toBaseUnits(decimal, DECIMALS);
   const show = (units: bigint): string => formatBaseUnits(units, DECIMALS);
 
@@ -178,7 +186,8 @@ export async function runProof(options: ProofOptions): Promise<ProofReport> {
     `owner token account ${ownerTokenAccount}`,
   ]);
 
-  const rail = createSolanaPayoutRail({ ...node, mint: mint.address, decimals: DECIMALS, delegateSecretKey });
+  const railConfig = { ...node, mint: mint.address, decimals: DECIMALS, delegateSecretKey };
+  const rail = createSolanaPayoutRail(railConfig);
   const remaining = async (expected: bigint): Promise<bigint> =>
     eventually(async () => (await rail.remaining(owner.address)).remaining, value => value === expected);
   assert.equal(await rail.delegate(), delegate.address);
@@ -205,13 +214,34 @@ export async function runProof(options: ProofOptions): Promise<ProofReport> {
     { to: second, amount: amount('2.5'), memo: 'INV-1042 audit milestone 2' },
     { to: third, amount: amount('0.75'), memo: 'INV-1043 translation' },
   ];
-  const payout = await rail.pay({ account: owner.address, lines, runId: RUN_ID });
-  assert.ok(payout.ok && payout.tx, `payout failed: ${payout.error}`);
+  const run1 = { account: owner.address, lines, runId: RUN_ID };
+
+  const priced = await rail.preview(run1);
+  assert.ok(priced.ok && priced.cost, `preview turned the run down: ${priced.error}`);
+  assert.equal(priced.cost.newTokenAccounts, 3);
+  step('preview() prices the run before anything is sent', null, [
+    `${priced.cost.newTokenAccounts} payee token accounts to create: ${priced.cost.rentLamports} lamports of rent ` +
+      `from the delegate, plus a fee of ${priced.cost.feeLamports} lamports`,
+  ]);
+
+  const refusedOverAccountLimit = await rail.pay({
+    account: owner.address,
+    lines: [...lines, { to: stranger, amount: amount('0.01'), memo: 'one new account too many' }],
+    runId: 'HF-2026-10-0009',
+  });
+  assert.equal(refusedOverAccountLimit.outcome, 'refused');
+  assert.match(refusedOverAccountLimit.error ?? '', /^run would create 4 payee token accounts/);
+  step('pay() refuses a run that would create four token accounts; the limit per run is three', null, [
+    `error: ${refusedOverAccountLimit.error}`,
+  ]);
+
+  const payout = await rail.pay(run1);
+  assert.ok(payout.outcome === 'paid' && payout.tx, `payout failed: ${payout.error}`);
   const remainingAfterRun = await remaining(amount('5.75'));
   assert.equal(remainingAfterRun, amount('5.75'));
   step(`Delegate pays run ${RUN_ID}: 1.00 + 2.50 + 0.75 to three new recipients, one transaction`, payout.tx, [
     ...(await describeOnChain(rpc, payout.tx)),
-    `line memos on chain: ${payout.lineMemos}`,
+    `outcome ${payout.outcome}, line memos on chain: ${payout.lineMemos}`,
     `remaining() = ${show(remainingAfterRun)}`,
   ]);
 
@@ -228,6 +258,32 @@ export async function runProof(options: ProofOptions): Promise<ProofReport> {
     ...run.transfers.map(transfer => `${show(transfer.amount)} to ${transfer.to} "${transfer.memo}"`),
     `total ${show(run.total)}`,
   ]);
+
+  const replay = await rail.pay(run1);
+  assert.ok(replay.ok && replay.replayed, `the replay was not recognised: ${replay.error}`);
+  assert.equal(replay.tx, payout.tx);
+  // A rail that starts afresh has only the chain to go by. Let it see the run
+  // there before it is asked to pay, as a service coming back up would.
+  const restarted = createSolanaPayoutRail(railConfig);
+  const seen = await eventually(() => restarted.preview(run1), preview => preview.paidBy !== null);
+  assert.equal(seen.paidBy, payout.tx);
+  const replayAfterRestart = await restarted.pay(run1);
+  assert.ok(replayAfterRestart.ok && replayAfterRestart.replayed);
+  assert.equal(replayAfterRestart.tx, payout.tx);
+  assert.equal(await remaining(remainingAfterRun), remainingAfterRun, 'a replay pays nothing');
+  step('pay() called again with the same run returns the first transaction and sends nothing', null, [
+    `same rail: outcome ${replay.outcome}, replayed ${replay.replayed}, tx ${replay.tx}`,
+    `a new rail on the same key, found on chain: replayed ${replayAfterRestart.replayed}, tx ${replayAfterRestart.tx}`,
+    `remaining() = ${show(remainingAfterRun)}`,
+  ]);
+
+  const refusedDifferentLines = await rail.pay({
+    ...run1,
+    lines: lines.map((line, index) => (index === 0 ? { ...line, amount: amount('1.5') } : line)),
+  });
+  assert.equal(refusedDifferentLines.outcome, 'refused');
+  assert.match(refusedDifferentLines.error ?? '', /was already paid by .* with different lines/);
+  step('pay() refuses the same run id with different lines', null, [`error: ${refusedDifferentLines.error}`]);
 
   const refusedBeforeSending = await rail.pay({
     account: owner.address,
@@ -249,6 +305,13 @@ export async function runProof(options: ProofOptions): Promise<ProofReport> {
     probe.signature,
     [`reported: ${probe.error}`, ...(await describeOnChain(rpc, probe.signature))],
   );
+
+  const probeAtNewAddress = await rail.probeOverAllowance({ account: owner.address, to: stranger });
+  assert.equal(probeAtNewAddress.signature, null);
+  assert.match(probeAtNewAddress.error ?? '', /the probe never creates one/);
+  step('probeOverAllowance sends nothing at an address without a token account', null, [
+    `reported: ${probeAtNewAddress.error}`,
+  ]);
 
   const selfProbe = await rail.probeOverAllowance({ account: owner.address, to: owner.address });
   assert.ok(selfProbe.failedOnChain && selfProbe.signature, `the self probe was not refused: ${selfProbe.error}`);
@@ -289,15 +352,21 @@ export async function runProof(options: ProofOptions): Promise<ProofReport> {
     delegate: delegate.address,
     mint: mint.address,
     ownerTokenAccount,
-    recipients: recipients.map(recipient => recipient.address),
+    recipients: [first, second, third],
     funding,
     steps,
     remainingAfterApproval,
+    priced,
+    refusedOverAccountLimit,
     remainingAfterRun,
     payout,
     run,
+    replay,
+    replayAfterRestart,
+    refusedDifferentLines,
     refusedBeforeSending,
     probe,
+    probeAtNewAddress,
     selfProbe,
     remainingAfterRevoke,
     refusedAfterRevoke,

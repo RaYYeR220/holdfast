@@ -1,11 +1,4 @@
-import {
-  generateKeyPairSigner,
-  getBase64Encoder,
-  getCompiledTransactionMessageDecoder,
-  getTransactionDecoder,
-  type Address,
-  type KeyPairSigner,
-} from '@solana/kit';
+import { generateKeyPairSigner, type KeyPairSigner } from '@solana/kit';
 import { getAddMemoInstruction } from '@solana-program/memo';
 import { getTransferCheckedInstruction } from '@solana-program/token';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -13,7 +6,17 @@ import { associatedTokenAddress } from '../src/accounts';
 import { PAYOUT_MEMO_PROGRAM_ADDRESS, payoutInstructions, type PayoutPlan } from '../src/payout';
 import { readRun } from '../src/reconcile';
 import { addressOf } from './fake-node';
-import { createWorld, decodeWire, MINT, OWNER, payee, signedWire, type World } from './world';
+import {
+  createWorld,
+  decodeWire,
+  historyEntry,
+  MINT,
+  OWNER,
+  payee,
+  recorded,
+  signedWire,
+  type World,
+} from './world';
 
 const RUN_ID = 'HF-2026-10-0001';
 const MEMO_FIELD = '[15] HF-2026-10-0001; [8] INV-1041; [8] INV-1042';
@@ -43,30 +46,6 @@ async function planFor(lines: { line: number; amount: bigint; memo: string }[], 
   };
 }
 
-/** A `getTransaction` answer for a wire transaction, with the token balance records a node attaches. */
-function recorded(wire: string, wallets: Record<Address, Address>, err: unknown = null) {
-  const message = getCompiledTransactionMessageDecoder().decode(
-    getTransactionDecoder().decode(getBase64Encoder().encode(wire)).messageBytes,
-  );
-  const accounts = 'staticAccounts' in message ? message.staticAccounts : [];
-  return {
-    slot: 77,
-    blockTime: 1_791_637_091,
-    version: 0,
-    transaction: [wire, 'base64'],
-    meta: {
-      err,
-      fee: 5_000,
-      postTokenBalances: Object.entries(wallets).map(([tokenAccount, owner]) => ({
-        accountIndex: accounts.indexOf(tokenAccount as Address),
-        mint: MINT,
-        owner,
-        uiTokenAmount: { amount: '0', decimals: 6, uiAmountString: '0' },
-      })),
-    },
-  };
-}
-
 async function paidRun(lineMemos = true) {
   const plan = await planFor(
     [
@@ -80,14 +59,7 @@ async function paidRun(lineMemos = true) {
   return { plan, signature, answer: recorded(wire, wallets) };
 }
 
-const entry = (signature: string, memo: string | null, err: unknown = null) => ({
-  signature,
-  memo,
-  err,
-  slot: 77,
-  blockTime: 1_791_637_091,
-  confirmationStatus: 'finalized',
-});
+const entry = historyEntry;
 
 describe('findRun', () => {
   it('rebuilds a run from the history of the team token account', async () => {

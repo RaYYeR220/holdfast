@@ -14,7 +14,7 @@ import {
   type Signature,
 } from '@solana/kit';
 import type { UnsignedTransaction } from '../src/approval';
-import { sendAndConfirm, type SendOutcome } from '../src/confirm';
+import { broadcastOf, sendAndConfirm, type SendOutcome } from '../src/confirm';
 import type { SolanaRpc } from '../src/connection';
 import { describeTransactionError } from '../src/errors';
 
@@ -36,10 +36,8 @@ export async function submit(rpc: SolanaRpc, feePayer: KeyPairSigner, instructio
     m => appendTransactionMessageInstructions(instructions, m),
   );
   const transaction = await signTransactionMessageWithSigners(message);
-  const outcome = await sendAndConfirm(rpc, transaction, {
-    commitment: 'confirmed',
-    lastValidBlockHeight: lifetime.lastValidBlockHeight,
-  });
+  const broadcast = broadcastOf(transaction, lifetime.lastValidBlockHeight);
+  const outcome = await sendAndConfirm(rpc, broadcast, { commitment: 'confirmed' });
   return requireSuccess(outcome, instructions);
 }
 
@@ -55,9 +53,7 @@ export async function signAndSendAsWallet(
   const decoded = getTransactionDecoder().decode(getBase64Encoder().encode(unsigned.transaction));
   const signed = await signTransaction([wallet.keyPair], decoded);
   assertIsSendableTransaction(signed);
-  const outcome = await sendAndConfirm(rpc, signed, {
-    commitment: 'confirmed',
-    lastValidBlockHeight: unsigned.lastValidBlockHeight,
-  });
+  const broadcast = broadcastOf(signed, unsigned.lastValidBlockHeight);
+  const outcome = await sendAndConfirm(rpc, broadcast, { commitment: 'confirmed' });
   return requireSuccess(outcome);
 }
