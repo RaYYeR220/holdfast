@@ -39,10 +39,25 @@ function toZat(amount: number, what: string): bigint {
   return BigInt(amount);
 }
 
+/**
+ * Whether the treasury itself made this transaction.
+ *
+ * Anyone can pay the treasury in a transaction that also moves their own
+ * money somewhere else, so a transparent output or a fee is only the
+ * treasury's if the treasury spent here. Two things prove that: a note
+ * readable only with the treasury's outgoing or internal key, or a
+ * transaction with nothing addressed to the treasury at all — which the
+ * scanner reports only because one of the treasury's notes was spent in it.
+ */
+function isAuthoredByTreasury(tx: native.ShieldedTransaction): boolean {
+  const notes = POOLS.flatMap(([field]) => tx[field]);
+  if (notes.length === 0) return true;
+  return notes.some((n) => n.transferType === 'outgoing' || n.transferType === 'internal');
+}
+
 function mapTransaction(tx: native.ShieldedTransaction, into: ScanResult): void {
   const time = tx.blockTime * 1_000;
-  let sentShielded = false;
-  let ownsAnInput = false;
+  const authored = isAuthoredByTreasury(tx);
 
   for (const [field, pool] of POOLS) {
     tx[field].forEach((note, index) => {
@@ -50,11 +65,12 @@ function mapTransaction(tx: native.ShieldedTransaction, into: ScanResult): void 
       const id = `${tx.txid}:${pool}:${note.cmx ?? index}`;
       const zat = toZat(note.amount, id);
       if (note.transferType === 'outgoing') {
-        sentShielded = true;
         into.outgoing.push({ id, txid: tx.txid, height: tx.blockHeight, time, zat, memo: note.memo, pool });
         return;
       }
-      if (note.transferType === 'internal') ownsAnInput = true;
+      if (note.transferType !== 'incoming' && note.transferType !== 'internal') {
+        throw new Error(`${id}: unknown transfer type "${note.transferType}"`);
+      }
       const owned: OwnedNote = {
         id,
         txid: tx.txid,
@@ -71,6 +87,8 @@ function mapTransaction(tx: native.ShieldedTransaction, into: ScanResult): void 
     });
   }
 
+  if (!authored) return;
+
   // A shielded-to-transparent send leaves nothing to decrypt for the value it
   // moved; the transparent output total is the only trace of it.
   if (tx.transparentOut > 0 && !tx.hasTransparentInputs) {
@@ -84,25 +102,33 @@ function mapTransaction(tx: native.ShieldedTransaction, into: ScanResult): void 
       pool: 'transparent',
     };
     into.outgoing.push(out);
-    sentShielded = true;
   }
 
-  if ((sentShielded || ownsAnInput) && tx.fee > 0) {
-    into.fees.push({ txid: tx.txid, zat: toZat(tx.fee, `${tx.txid}:fee`) });
-  }
+  if (tx.fee > 0) into.fees.push({ txid: tx.txid, zat: toZat(tx.fee, `${tx.txid}:fee`) });
+}
+
+const VIEWING_KEY = /uview(test)?1[02-9ac-hj-np-z]{20,}/g;
+
+/**
+ * A viewing key reveals the whole treasury, so it must never ride out in an
+ * error message that might be logged or shown.
+ */
+export function redactViewingKeys(text: string, ufvk?: string): string {
+  const withoutExact = ufvk !== undefined && ufvk !== '' ? text.split(ufvk).join('[viewing key]') : text;
+  return withoutExact.replace(VIEWING_KEY, '[viewing key]');
 }
 
 export function createTreasuryScanner(config: ScannerConfig): TreasuryScanner {
   const lib: ScanLib = config.lib ?? native;
   if (config.endpoints.length === 0) throw new RangeError('at least one Zcash endpoint is required');
 
-  async function withFailover<T>(run: (endpoint: string) => Promise<T>): Promise<T> {
+  async function withFailover<T>(run: (endpoint: string) => Promise<T>, ufvk?: string): Promise<T> {
     const attempts: { endpoint: string; error: string }[] = [];
     for (const endpoint of config.endpoints) {
       try {
         return await run(endpoint);
       } catch (e) {
-        attempts.push({ endpoint, error: e instanceof Error ? e.message : String(e) });
+        attempts.push({ endpoint, error: redactViewingKeys(e instanceof Error ? e.message : String(e), ufvk) });
       }
     }
     throw new ScannerUnavailableError(attempts);
@@ -140,7 +166,7 @@ export function createTreasuryScanner(config: ScannerConfig): TreasuryScanner {
         }
         result.spentNullifiers = [...stats.spentKnownNullifiers];
         return result;
-      });
+      }, ufvk);
     },
   };
 }

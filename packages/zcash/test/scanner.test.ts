@@ -1,6 +1,6 @@
 import type { ShieldedNote, ShieldedTransaction, SyncParams } from '@ledgerhq/zcash-utils';
 import { describe, expect, it } from 'vitest';
-import { type ScanLib, ScannerUnavailableError, createTreasuryScanner } from '../src/scanner';
+import { type ScanLib, ScannerUnavailableError, createTreasuryScanner, redactViewingKeys } from '../src/scanner';
 
 function note(over: Partial<ShieldedNote>, without: ('nullifier' | 'cmx')[] = []): ShieldedNote {
   const n: ShieldedNote = {
@@ -190,5 +190,52 @@ describe('treasury scanner', () => {
   it('refuses a malformed range and an empty endpoint list', async () => {
     await expect(scanner(fakeLib({})).scan({ ...range, fromHeight: 10, toHeight: 5 })).rejects.toThrow(/invalid scan range/);
     expect(() => createTreasuryScanner({ network: 'mainnet', endpoints: [] })).toThrow();
+  });
+
+  it('does not book a stranger\'s transparent output or fee against the treasury', async () => {
+    // Someone pays the treasury and, in the same transaction, moves 1,000 ZEC of their own.
+    const theirs = tx({ transparentOut: 100_000_000_000, fee: 20_000, ironwoodNotes: [note({})] });
+    const r = await scanner(fakeLib({ txs: [theirs] })).scan(range);
+    expect(r.notes.map((n) => n.zat)).toEqual([1_450_000n]);
+    expect(r.outgoing).toEqual([]);
+    expect(r.fees).toEqual([]);
+  });
+
+  it('books a send that left nothing addressed to the treasury', async () => {
+    // The whole balance went to a transparent address: no change, nothing to decrypt.
+    const sweep = tx({ transparentOut: 1_440_000, fee: 10_000 });
+    const r = await scanner(fakeLib({ txs: [sweep] })).scan(range);
+    expect(r.notes).toEqual([]);
+    expect(r.outgoing.map((o) => [o.zat, o.pool])).toEqual([[1_440_000n, 'transparent']]);
+    expect(r.fees).toEqual([{ txid: 'f0'.repeat(32), zat: 10_000n }]);
+  });
+
+  it('refuses a transfer type it does not know', async () => {
+    const odd = tx({ ironwoodNotes: [note({ transferType: 'mystery' })] });
+    await expect(scanner(fakeLib({ txs: [odd] }), ['https://a:443']).scan(range)).rejects.toThrow(/unknown transfer type/);
+  });
+
+  it('keeps the viewing key out of error messages', async () => {
+    const ufvk = `uview1${'q'.repeat(120)}`;
+    const lib: ScanLib = {
+      getChainTip: async () => 1,
+      startSync: async (p) => {
+        throw new Error(`could not parse ${p.viewingKey} for account 0`);
+      },
+    };
+    const failure = await scanner(lib, ['https://a:443'])
+      .scan({ ...range, ufvk })
+      .catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(ScannerUnavailableError);
+    const text = JSON.stringify([(failure as ScannerUnavailableError).message, (failure as ScannerUnavailableError).attempts]);
+    expect(text).not.toContain(ufvk);
+    expect(text).toContain('[viewing key]');
+  });
+
+  it('redacts any viewing key it finds in text', () => {
+    const key = `uviewtest1${'z'.repeat(80)}`;
+    expect(redactViewingKeys(`a ${key} b`)).toBe('a [viewing key] b');
+    expect(redactViewingKeys('odd-secret here', 'odd-secret')).toBe('[viewing key] here');
+    expect(redactViewingKeys('nothing to hide')).toBe('nothing to hide');
   });
 });
