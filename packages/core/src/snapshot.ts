@@ -24,6 +24,7 @@ export type Action =
   | { kind: 'reduceShort'; lots: number; limitPx: number };
 
 export type RefusalCode =
+  | 'INVALID_POLICY'
   | 'STALE_TREASURY'
   | 'STALE_HL'
   | 'STALE_REF'

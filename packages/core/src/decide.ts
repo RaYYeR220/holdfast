@@ -1,16 +1,9 @@
-import type { Policy } from './policy';
+import { isFresh, isUsablePrice } from './freshness';
+import { type Policy, validatePolicy } from './policy';
 import type { Action, Decision, Refusal, Snapshot } from './snapshot';
 import { notionalUsd, roundPx, zatToLots } from './units';
 
 type Hl = NonNullable<Snapshot['hl']>;
-
-function isFresh(asOf: number, now: number, maxAgeMs: number): boolean {
-  return Number.isFinite(asOf) && now - asOf <= maxAgeMs;
-}
-
-function isUsablePrice(px: number): boolean {
-  return Number.isFinite(px) && px > 0;
-}
 
 function divergenceBps(a: number, b: number): number {
   return (Math.abs(a - b) / b) * 10_000;
@@ -54,6 +47,11 @@ export function decide(s: Snapshot, p: Policy): Decision {
     reasons,
   });
 
+  if (!validatePolicy(p).ok) {
+    refusals.push({ code: 'INVALID_POLICY', detail: 'policy failed validation' });
+    return done('HOLD', [], null, null);
+  }
+
   const hl = s.hl;
   if (
     hl === null ||
@@ -61,6 +59,7 @@ export function decide(s: Snapshot, p: Policy): Decision {
     !isUsablePrice(hl.markPx) ||
     !isUsablePrice(hl.oraclePx) ||
     !Number.isFinite(hl.accountValueUsd) ||
+    !Number.isFinite(hl.fundingAprBps) ||
     !Number.isInteger(hl.shortLots)
   ) {
     refusals.push({ code: 'STALE_HL', detail: 'venue state is missing, old or malformed' });
@@ -87,7 +86,7 @@ export function decide(s: Snapshot, p: Policy): Decision {
   }
 
   const treasury = s.treasury;
-  if (treasury === null || !isFresh(treasury.asOf, s.now, p.maxDataAgeMs)) {
+  if (treasury === null || typeof treasury.zat !== 'bigint' || !isFresh(treasury.asOf, s.now, p.maxDataAgeMs)) {
     refusals.push({ code: 'STALE_TREASURY', detail: 'treasury balance is missing or old' });
     return done('HOLD', [], null, ratio);
   }
