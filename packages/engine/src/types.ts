@@ -22,6 +22,8 @@ export interface OrgState {
   birthday: number;
   /** Last block fully scanned, or null before the first scan. */
   scannedTo: number | null;
+  /** Highest chain tip seen so far and when it was first seen; null before the first scan. */
+  tip: { height: number; since: number } | null;
   /** The organisation's own Hyperliquid account. */
   hlUser: string;
   policy: Policy;
@@ -36,6 +38,8 @@ export interface OrgState {
 export interface ScanCommit {
   from: number;
   to: number;
+  /** The chain tip this scan was run against, and when that tip was first seen. */
+  tip: { height: number; since: number };
   notes: OwnedNote[];
   outgoing: OutgoingPayment[];
   fees: { txid: string; zat: Zat }[];

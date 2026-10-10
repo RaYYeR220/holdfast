@@ -216,6 +216,63 @@ describe('tick', () => {
     expect(e.decision.refusals.map((r) => r.code)).toEqual(['STALE_TREASURY']);
   });
 
+  it('does not trust an endpoint that is behind what it has already seen', async () => {
+    const t = setup();
+    t.chain.notes = [note(BIRTHDAY + 10, 5_000_000n)];
+    await t.run();
+
+    t.chain.height -= 40;
+    const e = await t.run();
+    expect(e.snapshot.treasury).toBeNull();
+    expect(e.order).toBeNull();
+    expect(e.errors).toEqual([
+      { source: 'treasury', message: `chain endpoint is behind: tip ${BIRTHDAY + 60}, already seen ${BIRTHDAY + 100}` },
+    ]);
+    expect(e.decision.refusals.map((r) => r.code)).toEqual(['STALE_TREASURY']);
+  });
+
+  it('does not trust an endpoint whose tip is before the treasury existed', async () => {
+    const t = setup();
+    t.chain.height = BIRTHDAY - 5;
+    const e = await t.run();
+    expect(e.snapshot.treasury).toBeNull();
+    expect(e.errors[0]?.message).toMatch(/chain endpoint is behind/);
+  });
+
+  it('stops believing a balance once the chain tip stops moving', async () => {
+    const t = setup();
+    t.chain.notes = [note(BIRTHDAY + 10, 3_000_000n)];
+    await t.run();
+    expect(t.venue.shortLots).toBe(3);
+
+    // More money arrives, but only on a chain this endpoint no longer follows.
+    let last = await t.run();
+    for (let minute = 0; minute < 25; minute++) last = await t.run();
+    expect(last.snapshot.treasury).toBeNull();
+    expect(last.order).toBeNull();
+    expect(last.errors[0]?.message).toMatch(/has not advanced for 2\d minutes/);
+    expect(last.decision.refusals.map((r) => r.code)).toEqual(['STALE_TREASURY']);
+
+    // As soon as a block arrives the balance is believed again.
+    t.chain.height += 1;
+    const resumed = await t.run();
+    expect(resumed.snapshot.treasury?.zat).toBe(3_000_000n);
+    expect(resumed.errors).toEqual([]);
+  });
+
+  it('still protects the short while the chain view is stale', async () => {
+    const t = setup();
+    t.chain.notes = [note(BIRTHDAY + 10, 5_000_000n)];
+    await t.run();
+    for (let minute = 0; minute < 25; minute++) await t.run();
+
+    t.venue.equity = 8; // 5 lots is $61 of short: margin ratio 13%
+    const e = await t.run();
+    expect(e.snapshot.treasury).toBeNull();
+    expect(e.decision.mode).toBe('DERISK');
+    expect(e.order).toMatchObject({ side: 'buy', reduceOnly: true });
+  });
+
   it('holds and says why when the venue cannot be read', async () => {
     const t = setup();
     t.chain.notes = [note(BIRTHDAY + 10, 5_000_000n)];

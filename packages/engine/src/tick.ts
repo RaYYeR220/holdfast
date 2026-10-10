@@ -7,6 +7,11 @@ export const REORG_DEPTH = 20;
 export const MAX_BLOCKS_PER_TICK = 5_000;
 /** Funding is judged over the last three days. */
 export const FUNDING_WINDOW_HOURS = 72;
+/**
+ * Zcash aims for a block every 75 seconds. Twenty minutes without one is far
+ * outside chance; it means the endpoint, or the chain, has stalled.
+ */
+export const MAX_TIP_AGE_MS = 20 * 60_000;
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -18,14 +23,26 @@ export function cloidFor(orgId: string, seq: number, index: number): Hex {
 async function readTreasury(org: OrgState, deps: TickDeps, errors: JournalEntry['errors']) {
   try {
     const tip = await deps.scanner.tip();
+    const now = deps.now();
+
+    // An endpoint that is behind what has already been scanned, or whose tip
+    // has stopped moving, shows an old chain. A balance read from an old
+    // chain is an old balance, however recently it was fetched.
+    const known = Math.max(org.scannedTo ?? 0, org.tip?.height ?? 0);
+    if (tip < org.birthday || tip < known) {
+      throw new Error(`chain endpoint is behind: tip ${tip}, already seen ${Math.max(known, org.birthday)}`);
+    }
+    const since = org.tip !== null && org.tip.height === tip ? org.tip.since : now;
+    if (now - since > MAX_TIP_AGE_MS) {
+      throw new Error(`chain tip ${tip} has not advanced for ${Math.round((now - since) / 60_000)} minutes`);
+    }
+
     const resumeFrom = org.scannedTo === null ? org.birthday : org.scannedTo - REORG_DEPTH + 1;
     const from = Math.max(org.birthday, resumeFrom);
     const to = Math.min(tip, from + MAX_BLOCKS_PER_TICK - 1);
-    if (to >= from) {
-      const knownNullifiers = await deps.store.unspentNullifiers(org.id);
-      const scan = await deps.scanner.scan({ ufvk: org.ufvk, fromHeight: from, toHeight: to, knownNullifiers });
-      await deps.store.commitScan(org.id, { from, to, ...scan });
-    }
+    const knownNullifiers = await deps.store.unspentNullifiers(org.id);
+    const scan = await deps.scanner.scan({ ufvk: org.ufvk, fromHeight: from, toHeight: to, knownNullifiers });
+    await deps.store.commitScan(org.id, { from, to, tip: { height: tip, since }, ...scan });
     const caughtUp = to >= tip;
     // A balance read part-way through a catch-up is missing whatever the
     // unscanned blocks hold; it is not a balance yet.

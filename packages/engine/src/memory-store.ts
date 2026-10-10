@@ -17,10 +17,10 @@ interface OrgData {
 export class MemoryStore implements Store {
   private readonly orgs = new Map<string, OrgData>();
 
-  addOrg(init: Omit<OrgState, 'scannedTo' | 'nextSeq' | 'lastDigest'>): void {
+  addOrg(init: Omit<OrgState, 'scannedTo' | 'tip' | 'nextSeq' | 'lastDigest'>): void {
     if (this.orgs.has(init.id)) throw new Error(`organisation ${init.id} already exists`);
     this.orgs.set(init.id, {
-      state: { ...init, scannedTo: null, nextSeq: 1, lastDigest: ZERO_ROOT },
+      state: { ...init, scannedTo: null, tip: null, nextSeq: 1, lastDigest: ZERO_ROOT },
       notes: new Map(),
       outgoing: new Map(),
       fees: new Map(),
@@ -74,6 +74,7 @@ export class MemoryStore implements Store {
       if (note.nullifier !== null && spent.has(note.nullifier)) note.spent = true;
     }
     data.state.scannedTo = scan.to;
+    data.state.tip = { ...scan.tip };
   }
 
   async unspentNullifiers(orgId: string): Promise<string[]> {
