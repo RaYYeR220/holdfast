@@ -2,6 +2,7 @@ export * from './authorization';
 export * from './chain';
 export * from './config';
 export * from './key-status';
+export * from './log-search';
 export * from './memo';
 export * from './networks';
 export * from './preflight';

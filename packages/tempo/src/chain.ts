@@ -12,9 +12,19 @@ export interface TempoChain {
   head(): Promise<ChainHead>;
   keyState(root: Address): Promise<RawKeyState>;
   balanceOf(token: Address, owner: Address): Promise<bigint>;
-  /** Next nonce of the rail's lane on `root`. */
-  laneNonce(root: Address): Promise<number>;
-  /** `TransferWithMemo` logs of the payout token sent by `root` with one of `memos`. */
+  /**
+   * Next nonce of the rail's lane on `root`. With `atBlock` it is the nonce as
+   * of that block and rejects when the answering node does not have the block,
+   * so the answer can never be older than the block it names.
+   */
+  laneNonce(root: Address, atBlock?: bigint): Promise<number>;
+  /**
+   * `TransferWithMemo` logs of the payout token sent by `root` with one of
+   * `memos`, over the whole of `fromBlock..toBlock`. Resolves only with a
+   * complete answer: every part of the range searched, by a node that had
+   * reached the last block of that part. Anything less rejects, so that an
+   * empty result means the logs are not there.
+   */
   memoLogs(query: { root: Address; memos: Hex[]; fromBlock: bigint; toBlock: bigint }): Promise<ChainLog[]>;
   receipt(hash: Hex): Promise<ChainReceipt | null>;
   /** Simulates the calls, fills gas and fees, and signs with the access key and the sponsor. Rejects when the simulation does. */

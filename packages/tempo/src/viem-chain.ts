@@ -1,16 +1,11 @@
-import { type Address, type Hex, getAbiItem, http, keccak256 } from 'viem';
+import { type Address, type Hex, http, keccak256 } from 'viem';
 import { Abis, Account, Addresses, createClient } from 'viem/tempo';
 import type { BroadcastResult, ChainLog, ChainReceipt, ForcedTx, PayoutTx, RawKeyState, SignedTx, TempoChain } from './chain';
 import { type RailSettings, TempoRailError } from './config';
+import { LOG_RANGE, rpcBatchOver, searchMemoLogs } from './log-search';
 import { chainOf } from './networks';
 import { explainError } from './reasons';
 
-const transferWithMemoEvent = getAbiItem({ abi: Abis.tip20, name: 'TransferWithMemo' });
-
-/** Public Tempo RPCs refuse `eth_getLogs` over more blocks than this; the error names the real limit when it differs. */
-const LOG_RANGE = 100_000n;
-/** Ranges queried at once. The public RPC starts rate limiting above this. */
-const LOG_CONCURRENCY = 4;
 /** JSON-RPC errors that are not a verdict on the transaction: limit exceeded, internal error, too many requests. */
 const UNDECIDED_RPC_CODES = [-32005, -32603, 429];
 
@@ -35,15 +30,10 @@ interface ViemLog {
   blockNumber: bigint | null;
 }
 
+/** A log of an included transaction always says where it sits; one that does not is not taken on trust. */
 function toChainLog(log: ViemLog): ChainLog {
-  return {
-    address: log.address,
-    topics: log.topics,
-    data: log.data,
-    logIndex: log.logIndex ?? 0,
-    transactionHash: log.transactionHash ?? '0x',
-    blockNumber: log.blockNumber ?? 0n,
-  };
+  if (log.logIndex === null || log.transactionHash === null || log.blockNumber === null) throw new TempoRailError('the RPC returned a log without its position on chain');
+  return { address: log.address, topics: log.topics, data: log.data, logIndex: log.logIndex, transactionHash: log.transactionHash, blockNumber: log.blockNumber };
 }
 
 /** The JSON-RPC error code somewhere in a viem error chain; null when the node never answered. */
@@ -60,28 +50,15 @@ function rpcCodeOf(error: unknown): number | null {
   return null;
 }
 
-function rangeLimitOf(error: unknown): bigint | null {
-  const match = /max block range (\d+)/i.exec(explainError(error));
-  return match?.[1] ? BigInt(match[1]) : null;
-}
-
-type BlockRange = [from: bigint, to: bigint];
-
-/** Split `fromBlock..toBlock` into inclusive ranges of at most `span` blocks, newest first. */
-export function blockRanges(fromBlock: bigint, toBlock: bigint, span: bigint): BlockRange[] {
-  const ranges: BlockRange[] = [];
-  for (let to = toBlock; to >= fromBlock; to -= span) {
-    ranges.push([to - fromBlock >= span ? to - span + 1n : fromBlock, to]);
-  }
-  return ranges;
-}
-
 export function createViemChain(settings: RailSettings): TempoChain {
   const chain = chainOf(settings.network);
-  const transport = settings.rpcUrl === null ? http() : http(settings.rpcUrl);
+  const url = settings.rpcUrl ?? chain.rpcUrls.default.http[0];
+  if (!url) throw new TempoRailError(`no RPC URL is known for ${settings.network}`);
+  const transport = http(url);
   // No account on purpose: a read made as the scoped access key is itself refused as an out-of-scope call.
   const reader = createClient({ chain, transport });
   const request = reader.request as unknown as RawRequest;
+  const batch = rpcBatchOver(url);
   const sponsor = Account.fromSecp256k1(settings.sponsorPrivateKey);
   const signers = new Map<Address, Signer>();
   let chainChecked: Promise<void> | null = null;
@@ -127,7 +104,8 @@ export function createViemChain(settings: RailSettings): TempoChain {
 
     async head() {
       const block = await reader.getBlock();
-      return { number: block.number ?? 0n, timestamp: Number(block.timestamp), baseFeePerGas: block.baseFeePerGas ?? 0n };
+      if (block.number === null) throw new TempoRailError('the RPC returned a head block without a number');
+      return { number: block.number, timestamp: Number(block.timestamp), baseFeePerGas: block.baseFeePerGas ?? 0n };
     },
 
     async keyState(root: Address): Promise<RawKeyState> {
@@ -153,31 +131,17 @@ export function createViemChain(settings: RailSettings): TempoChain {
       return reader.readContract({ address: token, abi: Abis.tip20, functionName: 'balanceOf', args: [owner] });
     },
 
-    async laneNonce(root: Address): Promise<number> {
-      return Number(await reader.nonce.getNonce({ account: root, nonceKey: settings.nonceKey }));
+    async laneNonce(root: Address, atBlock?: bigint): Promise<number> {
+      // Pinned to a block number, the read is refused by a node that does not have that block yet ("block not found").
+      const at = atBlock === undefined ? {} : { blockNumber: atBlock };
+      return Number(await reader.nonce.getNonce({ account: root, nonceKey: settings.nonceKey, ...at }));
     },
 
     async memoLogs({ root, memos, fromBlock, toBlock }): Promise<ChainLog[]> {
-      const query = async ([from, to]: BlockRange): Promise<ChainLog[]> => {
-        const logs = await reader.getLogs({ address: settings.token, event: transferWithMemoEvent, args: { from: root, memo: memos }, fromBlock: from, toBlock: to });
-        return logs.map(toChainLog);
-      };
-      let ranges = blockRanges(fromBlock, toBlock, logRange);
-      const newest = ranges[0];
-      if (!newest) return [];
-      // The newest range goes first and alone: it is where a retried run usually is, and it shows how wide a range the RPC accepts.
-      const logs = await query(newest).catch((error: unknown) => {
-        const limit = rangeLimitOf(error);
-        if (limit === null || limit <= 0n || limit >= logRange) throw error;
-        logRange = limit;
-        ranges = blockRanges(fromBlock, toBlock, logRange);
-        return query(ranges[0] ?? newest);
-      });
-      for (let i = 1; i < ranges.length; i += LOG_CONCURRENCY) {
-        const batch = await Promise.all(ranges.slice(i, i + LOG_CONCURRENCY).map(query));
-        logs.push(...batch.flat());
-      }
-      return logs;
+      const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+      const found = await searchMemoLogs({ rpc: batch, token: settings.token, root, memos, fromBlock, toBlock, sleep, span: logRange });
+      logRange = found.span;
+      return found.logs;
     },
 
     async receipt(hash: Hex): Promise<ChainReceipt | null> {
@@ -186,6 +150,7 @@ export function createViemChain(settings: RailSettings): TempoChain {
         if (receipt.status !== 'success' && receipt.status !== 'reverted') return null;
         return { status: receipt.status, blockNumber: receipt.blockNumber, gasUsed: receipt.gasUsed, logs: receipt.logs.map(toChainLog) };
       } catch (error) {
+        // "Not found" is the one answer that means the transaction is not in a block; every other failure stays a failure.
         if ((error as { name?: string }).name === 'TransactionReceiptNotFoundError') return null;
         throw error;
       }
@@ -233,6 +198,7 @@ export function createViemChain(settings: RailSettings): TempoChain {
         if (!trace?.failed || typeof value !== 'string' || value === '' || value === '0x') return null;
         return (value.startsWith('0x') ? value : `0x${value}`) as Hex;
       } catch {
+        // Only ever used to name the reason of a revert the receipt already established.
         return null;
       }
     },

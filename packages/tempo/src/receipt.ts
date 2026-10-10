@@ -1,5 +1,6 @@
 import type { PayoutLine } from '@holdfast/core';
-import { type Address, type Hex, getAddress, hexToBigInt, isAddressEqual } from 'viem';
+import { type Address, type Hex, getAddress, hexToBigInt, isAddressEqual, toEventSelector } from 'viem';
+import { Addresses } from 'viem/tempo';
 import type { ChainLog } from './chain';
 import { lineOfMemo, memoBytes, memoText } from './memo';
 import { TRANSFER_TOPIC, TRANSFER_WITH_MEMO_TOPIC } from './tip20';
@@ -119,6 +120,17 @@ export function verifyPayoutLogs(input: { root: Address; token: Address; lines: 
   }
   if (problems.length > 0) return { ok: false, problems };
   return { ok: true, lines: paid };
+}
+
+const KEY_AUTHORIZED_TOPIC = toEventSelector('KeyAuthorized(address,address,uint8,uint64)');
+
+/** Whether a receipt records the keychain provisioning `accessKey` for `root`. */
+export function keyAuthorizedIn(logs: readonly ChainLog[], root: Address, accessKey: Address): boolean {
+  return logs.some((log) => {
+    const [signature, account, key] = log.topics;
+    if (!signature || !account || !key || !isAddressEqual(log.address, Addresses.accountKeychain)) return false;
+    return signature.toLowerCase() === KEY_AUTHORIZED_TOPIC && isAddressEqual(addressOfTopic(account), root) && isAddressEqual(addressOfTopic(key), accessKey);
+  });
 }
 
 /** Whether two sets of lines pay the same people the same amounts under the same memos. */

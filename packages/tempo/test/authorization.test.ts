@@ -6,8 +6,8 @@ import {
   MAX_SCOPED_RECIPIENTS,
   TOKENS,
   TRANSFER_WITH_MEMO_SELECTOR,
-  UNLIMITED,
   accessKeyAddressOf,
+  boundProblems,
   buildAccessKeyAuthorization,
   buildRevoke,
   generateAccessKey,
@@ -16,6 +16,7 @@ import {
   scopeOf,
   serializeSignedAuthorization,
   toKeyStatus,
+  verifySignedAuthorization,
 } from '../src/index';
 import { PAYEES, START, TOKEN as ALPHA } from './fake-chain';
 
@@ -157,14 +158,115 @@ describe('the signed authorization', () => {
     const read = readSignedAuthorization(serializeSignedAuthorization(request.authorization, await root.sign({ hash: request.signPayload })));
     expect(grantedStatus(read, TOKEN, START)).toMatchObject({
       authorized: true,
+      live: true,
+      mismatch: [],
       revoked: false,
       expiresAt: EXPIRY * 1000,
       limited: true,
       remaining: 10_000_000n,
       scope: { unrestricted: false, selectors: [TRANSFER_WITH_MEMO_SELECTOR], recipients: PAYEES, otherTargets: [] },
     });
-    // The same authorization gives nothing on a token it does not name.
-    expect(grantedStatus(read, BETA, START)).toMatchObject({ remaining: 0n, scope: { selectors: [], recipients: [] } });
+    // The same authorization is not a payout key for a token it does not name.
+    expect(grantedStatus(read, BETA, START)).toMatchObject({ authorized: false, live: true, remaining: 0n, scope: { selectors: [], recipients: [], otherTargets: [TOKEN] } });
+  });
+});
+
+describe('checking a signed authorization before it is submitted', () => {
+  const expected = policy();
+  const sign = async (over: Partial<Parameters<typeof buildAccessKeyAuthorization>[0]> = {}, signer: { sign: (i: { hash: `0x${string}` }) => Promise<`0x${string}`> } = root) => {
+    const request = buildAccessKeyAuthorization(policy(over));
+    return serializeSignedAuthorization(request.authorization, await signer.sign({ hash: request.signPayload }));
+  };
+  const check = (wire: `0x${string}`, over: Partial<Parameters<typeof verifySignedAuthorization>[0]> = {}) =>
+    verifySignedAuthorization({ wire, expected, account: root.address, accessKey: key.address, token: TOKEN, chainId: 42431, ...over });
+  const problemsOf = (result: ReturnType<typeof verifySignedAuthorization>) => (result.ok ? [] : result.problems);
+
+  /** A wire the root really signed for terms no policy of this rail describes. */
+  async function signRaw(terms: Record<string, unknown>) {
+    const authorization = KeyAuthorization.from({ address: key.address, type: 'p256', chainId: 42431n, expiry: EXPIRY, ...terms } as never) as KeyAuthorization.KeyAuthorization<false>;
+    return serializeSignedAuthorization(authorization, await root.sign({ hash: KeyAuthorization.getSignPayload(authorization) }));
+  }
+  const limits = [{ token: TOKEN, limit: 10_000_000n, period: 3_600 }];
+  const scopes = [{ address: TOKEN, selector: TRANSFER_WITH_MEMO_SELECTOR, recipients: PAYEES }];
+
+  it('accepts exactly the authorization built from the expected policy and signed by the account', async () => {
+    const result = check(await sign());
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.authorization.accessKey).toBe(key.address);
+  });
+
+  it('accepts a passkey root', async () => {
+    const passkey = Account.fromHeadlessWebAuthn(P256.randomPrivateKey(), { rpId: 'treasury.example', origin: 'https://treasury.example' });
+    const terms = policy({ rootAddress: passkey.address });
+    const request = buildAccessKeyAuthorization(terms);
+    const wire = serializeSignedAuthorization(request.authorization, await passkey.sign({ hash: request.signPayload }));
+    expect(check(wire, { expected: terms, account: passkey.address }).ok).toBe(true);
+    expect(problemsOf(check(wire, { expected: policy(), account: root.address }))).toEqual([`the authorization is not signed by the root key of ${root.address}`]);
+  });
+
+  it('refuses terms that differ from the expected ones, naming the difference', async () => {
+    const differing: [Partial<Parameters<typeof buildAccessKeyAuthorization>[0]>, RegExp][] = [
+      [{ limit: 10_000_001n }, /it allows 10\.000001 per 3600 s, expected 10\.00 per 3600 s/],
+      [{ periodSeconds: 0 }, /it allows 10\.00 per 0 s, expected 10\.00 per 3600 s/],
+      [{ expiry: EXPIRY + 1 }, /it expires .*, expected /],
+      [{ recipients: PAYEES.slice(0, 2) }, /it may pay \[.*\], expected \[/],
+      [{ recipients: [] }, /it may pay anyone, expected \[/],
+      [{ token: BETA }, /its spending limit is on token /],
+      [{ chainId: 4217 }, /the authorization is for chain 4217, this rail runs on chain 42431/],
+      [{ accessKeyAddress: generateAccessKey().address }, /the authorization is for key /],
+    ];
+    for (const [over, message] of differing) {
+      const problems = problemsOf(check(await sign(over)));
+      expect(problems.join(' | '), JSON.stringify(over, (_k, v) => (typeof v === 'bigint' ? `${v}` : v))).toMatch(message);
+    }
+    // The other way round: the wire is narrow, the expectation asks for any payee.
+    expect(problemsOf(check(await sign(), { expected: policy({ recipients: [] }) })).join()).toMatch(/it may pay \[.*\], expected anyone/);
+  });
+
+  it('refuses every grant that is broader than a bounded payout key', async () => {
+    const broader: [string, Record<string, unknown>, string][] = [
+      ['no limit', { scopes }, 'it sets no spending limit'],
+      ['a second limited token', { limits: [...limits, { token: BETA, limit: 1n, period: 0 }], scopes }, 'it sets 2 spending limits, expected exactly one'],
+      ['no scope', { limits }, `its call scope is not transferWithMemo on ${TOKEN} alone`],
+      ['the whole token', { limits, scopes: [{ address: TOKEN }] }, `its call scope is not transferWithMemo on ${TOKEN} alone`],
+      ['a second function', { limits, scopes: [...scopes, { address: TOKEN, selector: '0xa9059cbb' }] }, `its call scope is not transferWithMemo on ${TOKEN} alone`],
+      ['a second contract', { limits, scopes: [...scopes, { address: BETA, selector: TRANSFER_WITH_MEMO_SELECTOR }] }, `its call scope is not transferWithMemo on ${TOKEN} alone`],
+      ['no expiry', { limits, scopes, expiry: undefined }, 'it expires never, expected'],
+    ];
+    for (const [label, terms, message] of broader) {
+      const problems = problemsOf(check(await signRaw(terms)));
+      expect(problems.join(' | '), label).toContain(`the authorization differs from the expected policy: ${message}`);
+    }
+  });
+
+  it('refuses a wire that matches in every named term but is not the expected authorization', async () => {
+    const witnessed = await signRaw({ limits, scopes, witness: `0x${'11'.repeat(32)}` });
+    expect(problemsOf(check(witnessed))).toEqual(['the authorization is not the one built from the expected policy']);
+  });
+
+  it('refuses a signature that is not the root key\'s of the account', async () => {
+    const stranger = Account.fromSecp256k1('0x8da4ef21b864d2cc526dbdb2a120bd2874c36c9d0a1fb7f8c63d7f7a8b41de8f');
+    expect(problemsOf(check(await sign({}, stranger)))).toEqual([`the authorization is not signed by the root key of ${root.address}`]);
+    // Signed by the right root, but over other terms: the signature does not carry over.
+    const request = buildAccessKeyAuthorization(expected);
+    const other = buildAccessKeyAuthorization(policy({ limit: 1n }));
+    const transplanted = serializeSignedAuthorization(request.authorization, await root.sign({ hash: other.signPayload }));
+    expect(problemsOf(check(transplanted))).toEqual([`the authorization is not signed by the root key of ${root.address}`]);
+  });
+
+  it('refuses an expectation that is not about this account, key, token or chain', async () => {
+    const wire = await sign();
+    expect(problemsOf(check(wire, { account: PAYEES[0] }))).toEqual([`the expected policy is for account ${root.address}, not ${PAYEES[0]}`]);
+    expect(problemsOf(check(wire, { accessKey: PAYEES[0] }))).toContain(`the expected policy is for key ${key.address}, this rail signs with ${PAYEES[0]}`);
+    expect(problemsOf(check(wire, { token: BETA }))).toContain(`the expected policy is for token ${TOKEN}, this rail pays in ${BETA}`);
+    expect(problemsOf(check(wire, { chainId: 4217 }))).toContain('the expected policy is for chain 42431, this rail runs on chain 4217');
+    expect(problemsOf(check(wire, { expected: policy({ limit: 0n }) }))).toEqual(['the expected policy is not valid: limit must be positive']);
+  });
+
+  it('refuses what it cannot read', () => {
+    expect(problemsOf(check('0x1234'))).toEqual([expect.stringContaining('the authorization cannot be read')]);
+    const unsigned = KeyAuthorization.serialize(buildAccessKeyAuthorization(expected).authorization);
+    expect(problemsOf(check(unsigned))).toEqual(['the authorization cannot be read: the authorization is not signed']);
   });
 });
 
@@ -194,6 +296,8 @@ describe('key status from the keychain getters', () => {
     expect(toKeyStatus(raw, key.address, TOKEN, START)).toEqual({
       accessKey: key.address,
       authorized: true,
+      live: true,
+      mismatch: [],
       revoked: false,
       expiresAt: EXPIRY * 1000,
       limited: true,
@@ -205,26 +309,44 @@ describe('key status from the keychain getters', () => {
 
   it('reads a revoked key the way the chain reports it: zeroed, with the revoked flag', () => {
     const revoked = { ...raw, keyId: zero, expiry: 0n, isRevoked: true, remaining: 0n, periodEnd: 0n, scopes: [] };
-    expect(toKeyStatus(revoked, key.address, TOKEN, START)).toMatchObject({ authorized: false, revoked: true, expiresAt: null, remaining: 0n, periodEnd: null, scope: { selectors: [], recipients: [] } });
+    expect(toKeyStatus(revoked, key.address, TOKEN, START)).toMatchObject({ authorized: false, live: false, mismatch: [], revoked: true, expiresAt: null, remaining: 0n, periodEnd: null, scope: { selectors: [], recipients: [] } });
   });
 
   it('reads a key the account never authorized', () => {
     const unknown = { ...raw, keyId: zero, expiry: 0n, enforceLimits: false, remaining: 0n, periodEnd: 0n, scopes: [] };
-    expect(toKeyStatus(unknown, key.address, TOKEN, START)).toMatchObject({ authorized: false, revoked: false, expiresAt: null, remaining: 0n });
+    expect(toKeyStatus(unknown, key.address, TOKEN, START)).toMatchObject({ authorized: false, live: false, mismatch: [], revoked: false, expiresAt: null, remaining: 0n });
   });
 
   it('stops trusting a key at its expiry, whatever the limit says', () => {
     expect(toKeyStatus(raw, key.address, TOKEN, EXPIRY - 1).authorized).toBe(true);
-    expect(toKeyStatus(raw, key.address, TOKEN, EXPIRY)).toMatchObject({ authorized: false, revoked: false, remaining: 0n, periodEnd: null, expiresAt: EXPIRY * 1000 });
+    expect(toKeyStatus(raw, key.address, TOKEN, EXPIRY)).toMatchObject({ authorized: false, live: false, revoked: false, remaining: 0n, periodEnd: null, expiresAt: EXPIRY * 1000 });
   });
 
   it('reports a one-off limit without a reset time', () => {
     expect(toKeyStatus({ ...raw, periodEnd: 0n }, key.address, TOKEN, START).periodEnd).toBeNull();
   });
 
-  it('does not mistake the zero the chain reports for an unlimited key as an empty budget', () => {
-    const unlimited = { ...raw, enforceLimits: false, remaining: 0n, periodEnd: 0n };
-    expect(toKeyStatus(unlimited, key.address, TOKEN, START)).toMatchObject({ authorized: true, limited: false, remaining: UNLIMITED });
+  it('does not count a live key as authorized when it is broader than a bounded payout key', () => {
+    const memo = { selector: TRANSFER_WITH_MEMO_SELECTOR, recipients: PAYEES };
+    const unlimited = toKeyStatus({ ...raw, enforceLimits: false, remaining: 0n, periodEnd: 0n }, key.address, TOKEN, START);
+    expect(unlimited).toMatchObject({ authorized: false, live: true, limited: false, remaining: 0n, mismatch: ['it has no spending limit'] });
+    const unscoped = toKeyStatus({ ...raw, isScoped: false, scopes: [] }, key.address, TOKEN, START);
+    expect(unscoped).toMatchObject({ authorized: false, live: true, remaining: 0n, periodEnd: null, mismatch: ['it has no call scope and may call anything'] });
+    const both = toKeyStatus({ ...raw, enforceLimits: false, isScoped: false, scopes: [] }, key.address, TOKEN, START);
+    expect(both.mismatch).toEqual(['it has no spending limit', 'it has no call scope and may call anything']);
+    const wide = toKeyStatus({ ...raw, scopes: [{ target: TOKEN, selectorRules: [memo, { selector: '0xa9059cbb', recipients: [] }] }, { target: BETA, selectorRules: [] }] }, key.address, TOKEN, START);
+    expect(wide).toMatchObject({ authorized: false, live: true, remaining: 0n });
+    expect(wide.mismatch).toEqual([`it may call other contracts (${BETA})`, 'it may call other functions of the payout token (0xa9059cbb)']);
+  });
+
+  it('names every way a scope can be wider or other than transferWithMemo on the token', () => {
+    const bounded = { unrestricted: false, selectors: [TRANSFER_WITH_MEMO_SELECTOR], recipients: null, otherTargets: [] };
+    expect(boundProblems(true, bounded)).toEqual([]);
+    expect(boundProblems(true, { ...bounded, recipients: PAYEES })).toEqual([]);
+    expect(boundProblems(true, { ...bounded, selectors: null })).toEqual(['it may call every function of the payout token']);
+    expect(boundProblems(true, { ...bounded, selectors: [] })).toEqual(['it may not call transferWithMemo on the payout token']);
+    expect(boundProblems(true, { ...bounded, selectors: ['0xa9059cbb'] })).toEqual(['it may call other functions of the payout token (0xa9059cbb)', 'it may not call transferWithMemo on the payout token']);
+    expect(boundProblems(false, bounded)).toEqual(['it has no spending limit']);
   });
 
   it('treats a key without expiry as never expiring', () => {

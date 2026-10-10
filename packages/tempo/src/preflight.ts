@@ -1,8 +1,7 @@
 import type { PayoutLine } from '@holdfast/core';
 import { type Address, isAddress } from 'viem';
-import { allowsRecipient, allowsSelector } from './key-status';
+import { allowsRecipient } from './key-status';
 import { MAX_LINES_PER_RUN, lineOfMemo, memoProblem, runIdProblem } from './memo';
-import { TRANSFER_WITH_MEMO_SELECTOR } from './tip20';
 import type { KeyStatus } from './types';
 import { formatBaseUnits } from './units';
 
@@ -88,7 +87,8 @@ function iso(ms: number): string {
 export function keyProblems(key: KeyStatus, now: number): string[] {
   if (key.revoked) return [`access key ${key.accessKey} was revoked`];
   if (key.expiresAt !== null && key.expiresAt <= now * 1000) return [`access key ${key.accessKey} expired at ${iso(key.expiresAt)}`];
-  if (!key.authorized) return [`access key ${key.accessKey} is not authorized on this account`];
+  if (!key.live) return [`access key ${key.accessKey} is not authorized on this account`];
+  if (key.mismatch.length > 0) return [`access key ${key.accessKey} is not the bounded payout key this rail accepts: ${key.mismatch.join('; ')}`];
   if (key.expiresAt !== null && key.expiresAt <= (now + TX_VALIDITY_SECONDS) * 1000) {
     return [`access key ${key.accessKey} expires at ${iso(key.expiresAt)}, before a payout sent now is certain to settle`];
   }
@@ -96,8 +96,8 @@ export function keyProblems(key: KeyStatus, now: number): string[] {
 }
 
 /** Problems that depend on chain state. Assumes the lines themselves passed `lineProblems`. */
-export function payoutProblems(input: { lines: readonly PayoutLine[]; token: Address; sponsor: Address; facts: PayoutFacts }): string[] {
-  const { lines, token, sponsor, facts } = input;
+export function payoutProblems(input: { lines: readonly PayoutLine[]; sponsor: Address; facts: PayoutFacts }): string[] {
+  const { lines, sponsor, facts } = input;
   const { key } = facts;
   const total = totalOf(lines);
   const problems = keyProblems(key, facts.now);
@@ -107,13 +107,9 @@ export function payoutProblems(input: { lines: readonly PayoutLine[]; token: Add
       const until = key.periodEnd === null ? '' : ` until ${iso(key.periodEnd)}`;
       problems.push(`the run totals ${formatBaseUnits(total)} but the key may only spend ${formatBaseUnits(key.remaining)} more${until}`);
     }
-    if (!allowsSelector(key.scope, TRANSFER_WITH_MEMO_SELECTOR)) {
-      problems.push(`the key's scope does not allow transferWithMemo on ${token}`);
-    } else {
-      lines.forEach((line, i) => {
-        if (!allowsRecipient(key.scope, line.to as Address)) problems.push(`line ${i + 1}: ${line.to} is not on the key's recipient allow-list`);
-      });
-    }
+    lines.forEach((line, i) => {
+      if (!allowsRecipient(key.scope, line.to as Address)) problems.push(`line ${i + 1}: ${line.to} is not on the key's recipient allow-list`);
+    });
   }
   if (total > facts.rootBalance) {
     problems.push(`the run totals ${formatBaseUnits(total)} but the account holds ${formatBaseUnits(facts.rootBalance)} of the payout token`);

@@ -1,5 +1,6 @@
 import type { PayoutLine, PayoutRail, PayoutResult } from '@holdfast/core';
 import type { Address, Hex } from 'viem';
+import type { AccessKeyPolicyInput } from './authorization';
 import type { TempoNetwork } from './networks';
 
 export interface TempoRailConfig {
@@ -34,8 +35,16 @@ export interface KeyScope {
 /** What the Account Keychain says about the rail's access key on one account. Times are in ms. */
 export interface KeyStatus {
   accessKey: Address;
-  /** Known to the keychain, not revoked and not expired. */
+  /**
+   * Live on this account and bounded the way the rail requires: a spending
+   * limit, and a call scope of `transferWithMemo` on the payout token and
+   * nothing else. The rail pays with no other kind of key.
+   */
   authorized: boolean;
+  /** Known to the keychain for this account, not revoked and not expired, whatever it is allowed to do. */
+  live: boolean;
+  /** How a live key is broader or other than the bounded payout key the rail accepts; empty when it is not. */
+  mismatch: string[];
   revoked: boolean;
   /** Null when the key is unknown to the keychain or has no expiry. */
   expiresAt: number | null;
@@ -105,9 +114,9 @@ export interface TempoPayoutRail extends PayoutRail {
   preflight(i: { account: string; lines: PayoutLine[]; runId?: string }): Promise<PreflightResult>;
   /** The transaction that paid a run, found through the memo topics of the token's events. */
   findRun(account: string, runId: string, options?: FindRunOptions): Promise<RunOnChain | null>;
-  /** Lands a transfer of one unit more than the key may spend, to an allowed payee, and reports how the chain refused it. */
+  /** Lands a transfer no spending limit can cover, to an allowed payee, and reports how the chain refused it. It cannot move funds. */
   probeOverLimit(i: { account: string; to: string }): Promise<ProbeResult>;
-  /** Lands a plain `transfer` of one unit, which a payout key is not scoped for, and reports how the chain refused it. */
+  /** Lands a plain `transfer` of one base unit, which a payout key is not scoped for, and reports how the chain refused it. */
   probeOutOfScope(i: { account: string; to: string }): Promise<ProbeResult>;
   /** Provisions the access key from a root-signed authorization; the sponsor pays. */
   submitAuthorization(i: SubmitAuthorizationInput): Promise<TempoPayoutResult>;
@@ -118,6 +127,12 @@ export interface SubmitAuthorizationInput {
   account: string;
   /** Output of `serializeSignedAuthorization`. */
   signedWire: Hex;
+  /**
+   * The terms the treasurer was asked to sign: the same object that was given
+   * to `buildAccessKeyAuthorization`. The authorization is submitted only if
+   * it grants exactly these terms, to this rail's key, for `account`.
+   */
+  expected: AccessKeyPolicyInput;
   /** A payout to make in the same transaction that provisions the key. */
   firstRun?: { lines: PayoutLine[]; runId: string };
 }

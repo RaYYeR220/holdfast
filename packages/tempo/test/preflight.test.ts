@@ -76,11 +76,22 @@ describe('preflight', () => {
     expect(found).toEqual([]);
   });
 
-  it('refuses a key whose scope does not cover transferWithMemo on the payout token', async () => {
+  it('refuses a key that is scoped to another token', async () => {
     const found = await problems(({ chain }) => {
       chain.key = { ...chain.key, scopes: [{ target: TOKENS.moderato.BetaUSD, selectorRules: [{ selector: TRANSFER_WITH_MEMO_SELECTOR, recipients: [] }] }] };
     });
-    expect(found).toEqual([expect.stringMatching(/^the key's scope does not allow transferWithMemo on 0x20C0/)]);
+    expect(found).toEqual([expect.stringMatching(/ is not the bounded payout key this rail accepts: it may call other contracts \(0x20c0.*2\); it may not call transferWithMemo on the payout token$/)]);
+  });
+
+  it('refuses a key without a spending limit, and one without a call scope', async () => {
+    const unlimited = await problems(({ chain }) => {
+      chain.key = { ...chain.key, enforceLimits: false, remaining: 0n };
+    });
+    expect(unlimited).toEqual([expect.stringMatching(/ is not the bounded payout key this rail accepts: it has no spending limit$/)]);
+    const unscoped = await problems(({ chain }) => {
+      chain.key = { ...chain.key, isScoped: false, scopes: [] };
+    });
+    expect(unscoped).toEqual([expect.stringMatching(/ is not the bounded payout key this rail accepts: it has no call scope and may call anything$/)]);
   });
 
   it('refuses a run the account cannot fund', async () => {

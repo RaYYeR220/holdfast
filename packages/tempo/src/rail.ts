@@ -1,16 +1,16 @@
 import type { PayoutAllowance, PayoutLine } from '@holdfast/core';
 import type { KeyAuthorization } from 'ox/tempo';
-import { type Address, type Hex, getAddress, isAddress, isAddressEqual } from 'viem';
-import { type SignedAuthorization, readSignedAuthorization } from './authorization';
+import { type Address, type Hex, getAddress, isAddress, isAddressEqual, maxUint256 } from 'viem';
+import { verifySignedAuthorization } from './authorization';
 import type { ChainHead, ChainReceipt, SignedTx, TempoChain } from './chain';
 import { TempoRailError, resolveConfig } from './config';
-import { allowsRecipient, allowsSelector, grantedStatus, toKeyStatus } from './key-status';
+import { allowsRecipient, differencesFromAuthorization, grantedStatus, toKeyStatus } from './key-status';
 import { memoBytes, runIdProblem, runMemos } from './memo';
 import { TX_VALIDITY_SECONDS, feeCeiling, gasCeiling, keyProblems, lineProblems, payoutProblems } from './preflight';
 import type { PayoutFacts } from './preflight';
 import { decodeRevertReason, explainError } from './reasons';
-import { runLines, sameLines, verifyPayoutLogs } from './receipt';
-import { type Call, TRANSFER_SELECTOR, TRANSFER_WITH_MEMO_SELECTOR, transferCall, transferWithMemoCall } from './tip20';
+import { keyAuthorizedIn, runLines, sameLines, verifyPayoutLogs } from './receipt';
+import { type Call, transferCall, transferWithMemoCall } from './tip20';
 import type {
   FindRunOptions,
   KeyStatus,
@@ -92,11 +92,21 @@ function serialQueue() {
  * per line, signed by the access key, with fees paid by a separate sponsor so
  * that the key's limit is spent on payouts and nothing else.
  *
+ * The rail pays only with a key that is bounded on chain the way it expects:
+ * a spending limit, and a call scope of `transferWithMemo` on the payout token
+ * alone. A key the keychain lists with anything broader counts as not
+ * authorized, whatever the rail was configured with.
+ *
  * The run id reaches the chain through the memos: every line's memo must be
  * `<runId>/<line>` with a line from 1 to 32 (`lineMemo` builds it), and the
  * token emits the memo as an indexed event topic. A run can therefore carry
  * only 32 different memos, `findRun` searches for all of them, and that is
  * what makes `pay` safe to repeat for the same run id.
+ *
+ * Nothing is sent on the strength of a read that failed or may be out of
+ * date. The search for an earlier payment either covers every block up to the
+ * one the nonce was read at or fails; a transaction is called expired only on
+ * a nonce read pinned to a block whose time is past its deadline.
  */
 export function createTempoPayoutRail(config: TempoRailConfig, deps: RailDeps = {}): TempoPayoutRail {
   const settings = resolveConfig(config);
@@ -122,20 +132,17 @@ export function createTempoPayoutRail(config: TempoRailConfig, deps: RailDeps = 
     return [...accountProblems(account), ...lineProblems(lines, runId)];
   }
 
+  /** The key as the keychain holds it for `root`: a key authorized on some other account reads as unknown here. */
   async function status(root: Address): Promise<{ key: KeyStatus; head: ChainHead }> {
     const [raw, head] = await Promise.all([io.keyState(root), io.head()]);
     return { key: toKeyStatus(raw, accessKey, token, head.timestamp), head };
   }
 
-  async function facts(root: Address, gas: bigint, granted?: KeyStatus): Promise<PayoutFacts> {
+  /** `granted` stands in for the key while it is not provisioned yet; it is evaluated at the time that is read here. */
+  async function facts(root: Address, gas: bigint, granted?: (now: number) => KeyStatus): Promise<PayoutFacts> {
     const [current, rootBalance, sponsorBalance] = await Promise.all([status(root), io.balanceOf(token, root), io.balanceOf(settings.feeToken, sponsor)]);
-    return {
-      now: current.head.timestamp,
-      key: granted ?? current.key,
-      rootBalance,
-      sponsorBalance,
-      feeCeiling: feeCeiling(gas, current.head.baseFeePerGas),
-    };
+    const now = current.head.timestamp;
+    return { now, key: granted ? granted(now) : current.key, rootBalance, sponsorBalance, feeCeiling: feeCeiling(gas, current.head.baseFeePerGas) };
   }
 
   async function keyStatus(account: string): Promise<KeyStatus> {
@@ -155,11 +162,25 @@ export function createTempoPayoutRail(config: TempoRailConfig, deps: RailDeps = 
     if (invalid.length > 0) return { ok: false, problems: invalid };
     try {
       await io.assertChain();
-      const problems = payoutProblems({ lines: i.lines, token, sponsor, facts: await facts(getAddress(i.account), gasCeiling(i.lines.length)) });
+      const problems = payoutProblems({ lines: i.lines, sponsor, facts: await facts(getAddress(i.account), gasCeiling(i.lines.length)) });
       return problems.length === 0 ? { ok: true } : { ok: false, problems };
     } catch (error) {
       return { ok: false, problems: [`could not read the chain: ${explainError(error)}`] };
     }
+  }
+
+  /** Search the blocks up to `toBlock` for the run. Rejects rather than answer "not found" on a search that was not whole. */
+  async function locate(root: Address, runId: string, toBlock: bigint, lookback: bigint): Promise<RunOnChain | null> {
+    const fromBlock = toBlock > lookback ? toBlock - lookback : 0n;
+    const logs = await io.memoLogs({ root, memos: runMemos(runId).map(memoBytes), fromBlock, toBlock });
+    const ordered = [...logs].sort((a, b) => (a.blockNumber === b.blockNumber ? a.logIndex - b.logIndex : a.blockNumber < b.blockNumber ? -1 : 1));
+    const first = ordered[0];
+    if (!first) return null;
+    const hashes = [...new Set(ordered.map((log) => log.transactionHash))];
+    // Every memo a run can carry was searched for, so the logs in hand already hold all of its lines if the receipt is not served.
+    const receipt = await io.receipt(first.transactionHash);
+    const source = receipt?.logs ?? ordered.filter((log) => log.transactionHash === first.transactionHash);
+    return { tx: first.transactionHash, blockNumber: first.blockNumber, lines: runLines(source, root, token, runId), otherTxs: hashes.slice(1) };
   }
 
   async function findRun(account: string, runId: string, options: FindRunOptions = {}): Promise<RunOnChain | null> {
@@ -167,22 +188,12 @@ export function createTempoPayoutRail(config: TempoRailConfig, deps: RailDeps = 
     const problem = runIdProblem(runId);
     if (problem) throw new TempoRailError(problem);
     await io.assertChain();
-    const head = await io.head();
-    const lookback = options.lookbackBlocks ?? settings.lookbackBlocks;
-    const fromBlock = head.number > lookback ? head.number - lookback : 0n;
-    const logs = await io.memoLogs({ root, memos: runMemos(runId).map(memoBytes), fromBlock, toBlock: head.number });
-    const ordered = [...logs].sort((a, b) => (a.blockNumber === b.blockNumber ? a.logIndex - b.logIndex : a.blockNumber < b.blockNumber ? -1 : 1));
-    const first = ordered[0];
-    if (!first) return null;
-    const hashes = [...new Set(ordered.map((log) => log.transactionHash))];
-    const receipt = await io.receipt(first.transactionHash);
-    const source = receipt?.logs ?? ordered.filter((log) => log.transactionHash === first.transactionHash);
-    return { tx: first.transactionHash, blockNumber: first.blockNumber, lines: runLines(source, root, token, runId), otherTxs: hashes.slice(1) };
+    return locate(root, runId, (await io.head()).number, options.lookbackBlocks ?? settings.lookbackBlocks);
   }
 
-  /** What the chain already holds for this run id, whatever lines it was paid with; null when it holds nothing. */
-  async function alreadyOnChain(root: Address, lines: readonly PayoutLine[], runId: string): Promise<TempoPayoutResult | null> {
-    const found = await findRun(root, runId);
+  /** What the chain already holds for this run id up to `toBlock`, whatever lines it was paid with; null when it holds nothing. */
+  async function alreadyOnChain(root: Address, lines: readonly PayoutLine[], runId: string, toBlock: bigint): Promise<TempoPayoutResult | null> {
+    const found = await locate(root, runId, toBlock, settings.lookbackBlocks);
     if (!found) return null;
     if (found.otherTxs.length > 0) {
       const all = [found.tx, ...found.otherTxs].join(', ');
@@ -194,9 +205,13 @@ export function createTempoPayoutRail(config: TempoRailConfig, deps: RailDeps = 
 
   /**
    * Wait until the transaction is in a block or can no longer get into one.
-   * Chain time decides, not the local clock: once a block is stamped at or
-   * after `validBefore`, a transaction that has no receipt and has not used
-   * its nonce is dead for good.
+   *
+   * "Expired" needs two facts about one and the same block: its timestamp is
+   * at or past `validBefore`, so no later block can include the transaction,
+   * and the lane's nonce as of that block has not moved, so no block up to it
+   * did. The nonce is read pinned to that block; a node that does not have the
+   * block refuses the read, and a failed read concludes nothing. Whatever
+   * falls short of that is "unknown".
    */
   async function settle(root: Address, hash: Hex, nonce: number, validBefore: number): Promise<Outcome> {
     const giveUpAt = clock() + (TX_VALIDITY_SECONDS + SETTLE_GRACE_SECONDS) * 1000;
@@ -205,10 +220,9 @@ export function createTempoPayoutRail(config: TempoRailConfig, deps: RailDeps = 
       try {
         const receipt = await io.receipt(hash);
         if (receipt) return { kind: 'included', receipt };
-        if ((await io.head()).timestamp >= validBefore) {
-          const late = await io.receipt(hash);
-          if (late) return { kind: 'included', receipt: late };
-          if ((await io.laneNonce(root)) <= nonce) return { kind: 'expired' };
+        const head = await io.head();
+        if (head.timestamp >= validBefore) {
+          if ((await io.laneNonce(root, head.number)) <= nonce) return { kind: 'expired' };
           detail = 'the nonce was used but the node has no receipt for the transaction';
         } else {
           detail = null;
@@ -247,7 +261,11 @@ export function createTempoPayoutRail(config: TempoRailConfig, deps: RailDeps = 
     const outcome = await launch(root, tx, nonce, validBefore);
     if (outcome.kind !== 'included' && runId !== null) {
       // This transaction did not make it, but an earlier attempt at the same run may have: it held the same nonce.
-      const earlier = await alreadyOnChain(root, lines, runId).catch(() => null);
+      // Nothing is sent after this point, so a search that fails here only costs the better answer.
+      const earlier = await io
+        .head()
+        .then((head) => alreadyOnChain(root, lines, runId, head.number))
+        .catch(() => null);
       if (earlier) return earlier;
     }
     if (outcome.kind === 'rejected') {
@@ -266,12 +284,16 @@ export function createTempoPayoutRail(config: TempoRailConfig, deps: RailDeps = 
 
     const { receipt } = outcome;
     if (receipt.status === 'reverted') {
+      // The receipt has settled that nothing was paid; the trace only adds the name of the reason.
       const reason = decodeRevertReason(await io.revertData(tx.hash).catch(() => null));
       const why = reason ? `${reason.name}: ${reason.message}` : 'the RPC did not return a revert reason';
       return refused(`the transaction reverted on chain and nothing was paid (${why})`, tx.hash, receipt.gasUsed);
     }
     const check = verifyPayoutLogs({ root, token, lines, logs: receipt.logs });
     if (!check.ok) return refused(`the transaction succeeded but its events do not match the run: ${check.problems.join('; ')}`, tx.hash, receipt.gasUsed);
+    if (input.keyAuthorization && !keyAuthorizedIn(receipt.logs, root, accessKey)) {
+      return refused('the transaction succeeded but its receipt does not show the keychain provisioning the key', tx.hash, receipt.gasUsed);
+    }
     return { ok: true, tx: tx.hash, error: null, alreadyPaid: false, gasUsed: receipt.gasUsed };
   }
 
@@ -280,11 +302,14 @@ export function createTempoPayoutRail(config: TempoRailConfig, deps: RailDeps = 
     if (invalid.length > 0) return refused(invalid.join('; '));
     const root = getAddress(i.account);
     await io.assertChain();
-    // The lane is read before the run is looked up: a transaction of this run that lands in between
-    // has used this nonce, so the one built below collides with it instead of paying a second time.
-    const nonce = await io.laneNonce(root);
-    const existing = await alreadyOnChain(root, i.lines, i.runId);
+    // The nonce and the search belong to one block. A payment of this run in a block up to it is in the
+    // search, which covers every block up to it or fails. One in a later block, or still pending, holds
+    // this very nonce, so the transaction built below can only collide with it, never pay a second time.
+    const head = await io.head();
+    const nonce = await io.laneNonce(root, head.number);
+    const existing = await alreadyOnChain(root, i.lines, i.runId, head.number);
     if (existing) return existing;
+    // Read after the search, which is the slow step: key, balances and fees are as fresh as the send.
     const check = await preflight(i);
     if (!check.ok) return refused(check.problems.join('; '));
     return send({ root, lines: i.lines, runId: i.runId, nonce });
@@ -298,54 +323,52 @@ export function createTempoPayoutRail(config: TempoRailConfig, deps: RailDeps = 
   async function authorizeOnce(i: SubmitAuthorizationInput): Promise<TempoPayoutResult> {
     if (!isAddress(i.account)) return refused(`account "${i.account}" is not a valid address`);
     const root = getAddress(i.account);
-    let authorization: SignedAuthorization;
-    try {
-      authorization = readSignedAuthorization(i.signedWire);
-    } catch (error) {
-      return refused(`the authorization cannot be read: ${explainError(error)}`);
-    }
-    if (!isAddressEqual(authorization.accessKey, accessKey)) return refused(`the authorization is for key ${authorization.accessKey}, this rail signs with ${accessKey}`);
-    if (authorization.chainId !== settings.chainId) return refused(`the authorization is for chain ${authorization.chainId}, this rail runs on chain ${settings.chainId}`);
+    // Settled before any network call: the wire grants exactly what the caller expects, to this key, signed by this account's root.
+    const checked = verifySignedAuthorization({ wire: i.signedWire, expected: i.expected, account: root, accessKey, token, chainId: settings.chainId });
+    if (!checked.ok) return refused(checked.problems.join('; '));
+    const { authorization } = checked;
     const run = i.firstRun;
     const invalid = [...accountProblems(root), ...(run ? lineProblems(run.lines, run.runId) : [])];
     if (invalid.length > 0) return refused(invalid.join('; '));
 
     await io.assertChain();
-    const nonce = await io.laneNonce(root);
-    const { key, head } = await status(root);
+    const head = await io.head();
+    const nonce = await io.laneNonce(root, head.number);
+    const existing = run ? await alreadyOnChain(root, run.lines, run.runId, head.number) : null;
+
+    // The key is read after the search, so what is decided next rests on its state now.
+    const { key } = await status(root);
     if (key.revoked) return refused(`access key ${accessKey} was revoked on this account, and a revoked key can never be authorized again`);
-    if (key.authorized) return run ? payOnce({ account: root, lines: run.lines, runId: run.runId }) : { ok: true, tx: null, error: null, alreadyPaid: false, gasUsed: null };
-    if (run) {
-      const existing = await alreadyOnChain(root, run.lines, run.runId);
-      if (existing) return refused(`run ${run.runId} is already on chain in ${existing.tx}; submit the authorization without a first run`, existing.tx);
+    if (key.live) {
+      const differences = [...key.mismatch, ...differencesFromAuthorization(key, authorization, token)];
+      if (differences.length > 0) {
+        return refused(`access key ${accessKey} is already authorized on this account, but not on the expected terms: ${differences.join('; ')}; revoke it and authorize a new key`);
+      }
+      return run ? payOnce({ account: root, lines: run.lines, runId: run.runId }) : { ok: true, tx: null, error: null, alreadyPaid: false, gasUsed: null };
     }
+    if (run && existing) return refused(`run ${run.runId} is already on chain in ${existing.tx}; submit the authorization without a first run`, existing.tx);
 
-    const granted = grantedStatus(authorization, token, head.timestamp);
-    if (!allowsSelector(granted.scope, TRANSFER_WITH_MEMO_SELECTOR)) return refused(`the authorization does not allow transferWithMemo on ${token}, so this rail could not use the key`);
-    const lines = run ? run.lines : [carrier(granted.scope.recipients?.[0] ?? root)];
-    const gas = gasCeiling(lines.length, { recipients: granted.scope.recipients?.length ?? 0 });
-    const problems = payoutProblems({ lines, token, sponsor, facts: await facts(root, gas, granted) });
+    const granted = (now: number) => grantedStatus(authorization, token, now);
+    const { recipients } = granted(head.timestamp).scope;
+    const lines = run ? run.lines : [carrier(recipients?.[0] ?? root)];
+    const gas = gasCeiling(lines.length, { recipients: recipients?.length ?? 0 });
+    const problems = payoutProblems({ lines, sponsor, facts: await facts(root, gas, granted) });
     if (problems.length > 0) return refused(problems.join('; '));
-
-    const result = await send({ root, lines, runId: run?.runId ?? null, nonce, keyAuthorization: authorization.signed });
-    if (!result.ok) return result;
-    // A failed read here must not turn a transaction that succeeded into one that is reported as unsent.
-    const after = await status(root).catch(() => null);
-    if (after && !after.key.authorized) return refused('the transaction succeeded but the keychain does not list the key as authorized', result.tx, result.gasUsed);
-    return result;
+    return send({ root, lines, runId: run?.runId ?? null, nonce, keyAuthorization: authorization.signed });
   }
 
   function submitAuthorization(i: SubmitAuthorizationInput): Promise<TempoPayoutResult> {
     return exclusive(() => authorizeOnce(i).catch((error: unknown) => refused(explainError(error))));
   }
 
-  /** Broadcast calls the keychain must refuse, without simulating them first, and report what the chain recorded. */
+  /** Broadcast a call the keychain must refuse, without simulating it first, and report what the chain recorded. */
   async function probe(account: string, to: string, build: (to: Address, key: KeyStatus) => Call | string): Promise<ProbeResult> {
     if (!isAddress(account)) return noReceipt(`account "${account}" is not a valid address`);
     if (!isAddress(to)) return noReceipt(`"${to}" is not a valid address`);
     const root = getAddress(account);
     await io.assertChain();
     const { key, head } = await status(root);
+    // Only a bounded key is probed: with a broader one the call might simply go through.
     const unusable = keyProblems(key, head.timestamp)[0];
     if (unusable) return noReceipt(unusable);
     const call = build(getAddress(to), key);
@@ -373,20 +396,18 @@ export function createTempoPayoutRail(config: TempoRailConfig, deps: RailDeps = 
   function probeOverLimit(i: { account: string; to: string }): Promise<ProbeResult> {
     return probing(() =>
       probe(i.account, i.to, (to, key) => {
-        if (!key.limited) return 'the key has no spending limit to exceed';
         if (!allowsRecipient(key.scope, to)) return `${to} is outside the key's scope, so the scope check would fire before the limit; probe with an allowed payee`;
-        return transferWithMemoCall(token, to, key.remaining + 1n, OVER_LIMIT_MEMO);
+        // The largest amount there is, which no limit and no balance can cover. One unit above what is left
+        // would prove the same today, but that figure is read before the transaction lands: a window that
+        // refills, or a limit the root raises in between, would turn the probe into a payment.
+        return transferWithMemoCall(token, to, maxUint256, OVER_LIMIT_MEMO);
       }),
     );
   }
 
   function probeOutOfScope(i: { account: string; to: string }): Promise<ProbeResult> {
-    return probing(() =>
-      probe(i.account, i.to, (to, key) => {
-        if (allowsSelector(key.scope, TRANSFER_SELECTOR)) return "the key's scope allows a plain transfer, so this probe would move funds; nothing was sent";
-        return transferCall(token, to, 1n);
-      }),
-    );
+    // One base unit: should the scope change between the read and the block, that is all that can move.
+    return probing(() => probe(i.account, i.to, (to) => transferCall(token, to, 1n)));
   }
 
   return {

@@ -1,8 +1,9 @@
 import { KeyAuthorization } from 'ox/tempo';
-import { type Address, type Hex, decodeFunctionData, isAddressEqual, keccak256, pad, toHex } from 'viem';
+import { type Address, type Hex, decodeFunctionData, encodeEventTopics, isAddressEqual, keccak256, pad, toHex } from 'viem';
 import { generatePrivateKey, privateKeyToAddress } from 'viem/accounts';
-import { Abis } from 'viem/tempo';
+import { Abis, Account, Addresses } from 'viem/tempo';
 import {
+  type AccessKeyPolicyInput,
   type BroadcastResult,
   CALL_NOT_ALLOWED,
   type ChainHead,
@@ -19,13 +20,17 @@ import {
   TRANSFER_WITH_MEMO_TOPIC,
   type TempoChain,
   type TempoRailConfig,
+  buildAccessKeyAuthorization,
   createTempoPayoutRail,
   generateAccessKey,
   readSignedAuthorization,
+  serializeSignedAuthorization,
 } from '../src/index';
 
 export const TOKEN = TOKENS.moderato.AlphaUSD;
-export const ROOT: Address = '0x4dD928506f1276E811364FB0009b5A3997A534cb';
+/** The paying account. Its root is a throwaway key from public documentation; it never held funds anywhere. */
+export const ROOT_ACCOUNT = Account.fromSecp256k1('0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318');
+export const ROOT: Address = ROOT_ACCOUNT.address;
 export const PAYEES: [Address, Address, Address] = [
   '0x3c71213434d56CC8ACDe9Fb1c6b3d4920e40E19A',
   '0xF3009617E5A04f001Fc6839Def7A7f8A7ab4545b',
@@ -33,6 +38,9 @@ export const PAYEES: [Address, Address, Address] = [
 ];
 export const OUTSIDER: Address = '0x747a4BaeeaE8181AC988a67d3F2671ff3acdE0bC';
 export const START = 1_791_640_000;
+
+const ZERO: Address = '0x0000000000000000000000000000000000000000';
+const KEY_AUTHORIZED_TOPIC = encodeEventTopics({ abi: Abis.accountKeychain, eventName: 'KeyAuthorized' })[0] as Hex;
 
 type Decoded = { kind: 'memo'; to: Address; amount: bigint; memo: Hex } | { kind: 'plain'; to: Address; amount: bigint } | { kind: 'other' };
 
@@ -54,7 +62,8 @@ function nodeError(message: string, code: number, data?: Hex): Error {
 /**
  * An in-memory Tempo: one account, one access key, one token. It applies the
  * keychain's rules the way the node was observed to: scope before limit,
- * nothing transferred when a batch fails, a failed transaction still included.
+ * nothing transferred when a batch fails, a failed transaction still included,
+ * a state read pinned to a block it does not have refused.
  */
 export class FakeChain implements TempoChain {
   time = START;
@@ -63,10 +72,10 @@ export class FakeChain implements TempoChain {
   /** Seconds the clock moves each time the head is read. */
   tick = 1;
   wrongChain = false;
+  /** The key as the keychain holds it for `ROOT`; every other account has never seen it. */
   key: RawKeyState;
   rootBalance = 1_000_000_000n;
   sponsorBalance = 1_000_000_000n;
-  nonce = 0;
   /** What the next broadcasts do. `lost` mines the transaction but fails the call, as a dropped response would. */
   onBroadcast: 'mine' | 'drop' | 'unreachable' | 'lost' = 'mine';
   /** Rewrites the logs of the next mined transaction. */
@@ -76,8 +85,12 @@ export class FakeChain implements TempoChain {
   readonly signed: PayoutTx[] = [];
   readonly broadcasts: Hex[] = [];
   readonly receipts = new Map<Hex, ChainReceipt>();
+  /** The block every nonce read was pinned to; null for an unpinned read. */
+  readonly nonceReads: (bigint | null)[] = [];
+  readonly searches: { fromBlock: bigint; toBlock: bigint }[] = [];
   private readonly built = new Map<Hex, { tx: PayoutTx; hash: Hex }>();
   private readonly reverts = new Map<Hex, Hex>();
+  private readonly lane: { block: bigint; nonce: number }[] = [{ block: 0n, nonce: 0 }];
   private logs: ChainLog[] = [];
   private logIndex = 0;
 
@@ -97,12 +110,22 @@ export class FakeChain implements TempoChain {
     };
   }
 
+  get nonce(): number {
+    return this.lane[this.lane.length - 1]?.nonce ?? 0;
+  }
+
+  /** Something takes the lane's next nonce in a new block. */
+  useNonce(): void {
+    this.block += 1n;
+    this.lane.push({ block: this.block, nonce: this.nonce + 1 });
+  }
+
   revoke(): void {
-    this.key = { ...this.key, keyId: '0x0000000000000000000000000000000000000000', expiry: 0n, isRevoked: true, remaining: 0n, periodEnd: 0n, scopes: [] };
+    this.key = { ...this.key, keyId: ZERO, expiry: 0n, isRevoked: true, remaining: 0n, periodEnd: 0n, scopes: [] };
   }
 
   forget(): void {
-    this.key = { ...this.key, keyId: '0x0000000000000000000000000000000000000000', expiry: 0n, enforceLimits: false, remaining: 0n, periodEnd: 0n, scopes: [] };
+    this.key = { ...this.key, keyId: ZERO, expiry: 0n, enforceLimits: false, remaining: 0n, periodEnd: 0n, scopes: [] };
   }
 
   private guard(method: keyof TempoChain): void {
@@ -121,8 +144,9 @@ export class FakeChain implements TempoChain {
     return { number: this.block, timestamp: this.time, baseFeePerGas: this.baseFee };
   }
 
-  async keyState(): Promise<RawKeyState> {
+  async keyState(root: Address): Promise<RawKeyState> {
     this.guard('keyState');
+    if (!isAddressEqual(root, ROOT)) return { keyId: ZERO, expiry: 0n, enforceLimits: false, isRevoked: false, remaining: 0n, periodEnd: 0n, isScoped: true, scopes: [] };
     const expired = this.key.expiry <= BigInt(this.time);
     return expired ? { ...this.key, remaining: 0n, periodEnd: 0n } : this.key;
   }
@@ -133,13 +157,17 @@ export class FakeChain implements TempoChain {
     return isAddressEqual(owner, this.sponsor) ? this.sponsorBalance : 0n;
   }
 
-  async laneNonce(): Promise<number> {
+  async laneNonce(_root: Address, atBlock?: bigint): Promise<number> {
     this.guard('laneNonce');
-    return this.nonce;
+    this.nonceReads.push(atBlock ?? null);
+    if (atBlock === undefined) return this.nonce;
+    if (atBlock > this.block) throw nodeError(`block not found: 0x${atBlock.toString(16)}`, -32001);
+    return [...this.lane].reverse().find((entry) => entry.block <= atBlock)?.nonce ?? 0;
   }
 
   async memoLogs(query: { root: Address; memos: Hex[]; fromBlock: bigint; toBlock: bigint }): Promise<ChainLog[]> {
     this.guard('memoLogs');
+    this.searches.push({ fromBlock: query.fromBlock, toBlock: query.toBlock });
     return this.logs.filter(
       (log) =>
         log.topics[0] === TRANSFER_WITH_MEMO_TOPIC &&
@@ -199,8 +227,9 @@ export class FakeChain implements TempoChain {
     return this.build(tx);
   }
 
-  private provision(tx: PayoutTx): void {
-    if (!tx.keyAuthorization) return;
+  /** Stores the key a transaction carries and returns the event the keychain emits for it. */
+  private provision(tx: PayoutTx, hash: Hex): ChainLog[] {
+    if (!tx.keyAuthorization) return [];
     const granted = readSignedAuthorization(KeyAuthorization.serialize(tx.keyAuthorization));
     this.key = {
       keyId: granted.accessKey,
@@ -212,14 +241,15 @@ export class FakeChain implements TempoChain {
       isScoped: granted.isScoped,
       scopes: granted.scopes,
     };
+    const topics = [KEY_AUTHORIZED_TOPIC, pad(tx.root).toLowerCase() as Hex, pad(granted.accessKey).toLowerCase() as Hex];
+    return [{ address: Addresses.accountKeychain, topics, data: '0x', transactionHash: hash, blockNumber: this.block, logIndex: this.logIndex++ }];
   }
 
   private mine(hash: Hex, tx: PayoutTx): void {
-    this.nonce += 1;
-    this.block += 1n;
-    this.provision(tx);
+    this.useNonce();
+    // The key is stored even when the calls that travel with its authorization fail.
+    let logs = this.provision(tx, hash);
     const violation = this.violation(tx);
-    let logs: ChainLog[] = [];
     if (!violation) {
       for (const call of tx.calls.map((entry) => decodeCall(entry.data))) {
         if (call.kind === 'other') continue;
@@ -273,9 +303,19 @@ export function setup(overrides: Partial<TempoRailConfig> = {}) {
     { network: 'moderato', token: TOKEN, accessKeyPrivateKey: accessKey.privateKey, sponsorPrivateKey, ...overrides },
     { chain, sleep: async () => undefined, clock: () => (now += 1_000) },
   );
-  return { rail, chain, accessKey };
+  return { rail, chain, accessKey, sponsorPrivateKey };
 }
 
 export function line(runId: string, n: number, to: Address, amount: bigint) {
   return { to, amount, memo: `${runId}/${n}` };
+}
+
+/** The terms a treasurer is asked to sign in these tests, and the authorization the root of `ROOT` signs for them. */
+export function policyFor(accessKeyAddress: Address, over: Partial<AccessKeyPolicyInput> = {}): AccessKeyPolicyInput {
+  return { rootAddress: ROOT, accessKeyAddress, token: TOKEN, limit: 10_000_000n, periodSeconds: 3_600, expiry: START + 86_400, recipients: PAYEES, chainId: 42431, ...over };
+}
+
+export async function signAuthorization(expected: AccessKeyPolicyInput, signer: { sign: (i: { hash: Hex }) => Promise<Hex> } = ROOT_ACCOUNT): Promise<Hex> {
+  const request = buildAccessKeyAuthorization(expected);
+  return serializeSignedAuthorization(request.authorization, await signer.sign({ hash: request.signPayload }));
 }

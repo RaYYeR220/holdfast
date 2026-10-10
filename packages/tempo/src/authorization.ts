@@ -1,8 +1,9 @@
-import { KeyAuthorization } from 'ox/tempo';
+import { KeyAuthorization, SignatureEnvelope } from 'ox/tempo';
 import { type Address, type Hex, encodeFunctionData, getAddress, isAddress, isAddressEqual } from 'viem';
 import { Abis, Account, Addresses, P256 } from 'viem/tempo';
 import type { RawScope } from './chain';
-import { type Call, TRANSFER_WITH_MEMO } from './tip20';
+import { type Call, TRANSFER_WITH_MEMO, TRANSFER_WITH_MEMO_SELECTOR } from './tip20';
+import { formatBaseUnits } from './units';
 
 /**
  * Each allow-listed recipient adds about 510k gas to the transaction that
@@ -149,6 +150,101 @@ export function readSignedAuthorization(wire: Hex): SignedAuthorization {
     isScoped: decoded.scopes !== undefined,
     scopes,
   };
+}
+
+export type AuthorizationCheck = { ok: true; authorization: SignedAuthorization } | { ok: false; problems: string[] };
+
+function when(seconds: number | null): string {
+  return seconds === null ? 'never' : new Date(seconds * 1000).toISOString();
+}
+
+function reasonOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Where the terms a signature covers differ from the terms the caller expects, in words. */
+function termDifferences(authorization: SignedAuthorization, expected: AccessKeyPolicyInput): string[] {
+  const differences: string[] = [];
+  if (authorization.expiry !== expected.expiry) differences.push(`it expires ${when(authorization.expiry)}, expected ${when(expected.expiry)}`);
+
+  const { limits } = authorization;
+  const limit = limits?.[0];
+  if (limits === null) differences.push('it sets no spending limit');
+  else if (limits.length !== 1 || !limit) differences.push(`it sets ${limits.length} spending limits, expected exactly one`);
+  else if (!isAddressEqual(limit.token, expected.token)) differences.push(`its spending limit is on token ${limit.token}, expected ${expected.token}`);
+  else if (limit.limit !== expected.limit || limit.period !== expected.periodSeconds) {
+    differences.push(`it allows ${formatBaseUnits(limit.limit)} per ${limit.period} s, expected ${formatBaseUnits(expected.limit)} per ${expected.periodSeconds} s`);
+  }
+
+  const scope = authorization.scopes[0];
+  const rule = scope?.selectorRules[0];
+  const narrow = authorization.isScoped && authorization.scopes.length === 1 && scope !== undefined && isAddressEqual(scope.target, expected.token);
+  if (!narrow || scope.selectorRules.length !== 1 || !rule || rule.selector.toLowerCase() !== TRANSFER_WITH_MEMO_SELECTOR) {
+    differences.push(`its call scope is not transferWithMemo on ${expected.token} alone`);
+  } else {
+    const wanted = expected.recipients ?? [];
+    const same = rule.recipients.length === wanted.length && rule.recipients.every((recipient) => wanted.some((other) => isAddressEqual(recipient, other)));
+    const list = (recipients: readonly Address[]) => (recipients.length === 0 ? 'anyone' : `[${recipients.join(', ')}]`);
+    if (!same) differences.push(`it may pay ${list(rule.recipients)}, expected ${list(wanted)}`);
+  }
+  return differences;
+}
+
+/**
+ * Decide whether a signed authorization may be submitted. It may only when it
+ * is, to the byte, the authorization `buildAccessKeyAuthorization` produces
+ * for the terms the caller expects, when those terms are for this rail's key,
+ * token and chain, and when the signature over it is the root key's of
+ * `account`. All of it is settled here, before anything is sent: once a key
+ * is provisioned only the root can take it back.
+ *
+ * The signature is checked against the account's own address, so the root has
+ * to be a secp256k1 key or a passkey; other signature types are refused.
+ */
+export function verifySignedAuthorization(input: {
+  wire: Hex;
+  expected: AccessKeyPolicyInput;
+  account: Address;
+  accessKey: Address;
+  token: Address;
+  chainId: number;
+}): AuthorizationCheck {
+  const { expected, account, accessKey, token, chainId } = input;
+  let request: AccessKeyAuthorizationRequest;
+  try {
+    request = buildAccessKeyAuthorization(expected);
+  } catch (error) {
+    return { ok: false, problems: [`the expected policy is not valid: ${reasonOf(error)}`] };
+  }
+  const problems: string[] = [];
+  if (!isAddressEqual(request.rootAddress, account)) problems.push(`the expected policy is for account ${request.rootAddress}, not ${account}`);
+  if (!isAddressEqual(request.key.address, accessKey)) problems.push(`the expected policy is for key ${request.key.address}, this rail signs with ${accessKey}`);
+  if (!isAddressEqual(expected.token, token)) problems.push(`the expected policy is for token ${expected.token}, this rail pays in ${token}`);
+  if (expected.chainId !== chainId) problems.push(`the expected policy is for chain ${expected.chainId}, this rail runs on chain ${chainId}`);
+
+  let authorization: SignedAuthorization;
+  try {
+    authorization = readSignedAuthorization(input.wire);
+  } catch (error) {
+    return { ok: false, problems: [...problems, `the authorization cannot be read: ${reasonOf(error)}`] };
+  }
+  if (!isAddressEqual(authorization.accessKey, accessKey)) problems.push(`the authorization is for key ${authorization.accessKey}, this rail signs with ${accessKey}`);
+  if (authorization.chainId !== chainId) problems.push(`the authorization is for chain ${authorization.chainId}, this rail runs on chain ${chainId}`);
+  problems.push(...termDifferences(authorization, expected).map((difference) => `the authorization differs from the expected policy: ${difference}`));
+  if (problems.length > 0) return { ok: false, problems };
+
+  // The digest covers every field, including ones the comparison above has no words for.
+  if (KeyAuthorization.getSignPayload(authorization.signed) !== request.signPayload) {
+    return { ok: false, problems: ['the authorization is not the one built from the expected policy'] };
+  }
+  let signedByRoot: boolean;
+  try {
+    signedByRoot = SignatureEnvelope.verify(authorization.signed.signature, { address: account, payload: request.signPayload });
+  } catch {
+    return { ok: false, problems: [`the authorization carries a ${authorization.signed.signature.type} signature, which cannot be checked against the account; the root has to be a secp256k1 key or a passkey`] };
+  }
+  if (!signedByRoot) return { ok: false, problems: [`the authorization is not signed by the root key of ${account}`] };
+  return { ok: true, authorization };
 }
 
 /**

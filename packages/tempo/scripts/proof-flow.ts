@@ -130,12 +130,12 @@ export async function runModeratoProof(options: ProofOptions = {}): Promise<Proo
   // ---- the root authorizes the key: it signs one digest, the service submits it and the sponsor pays
   const request = buildAccessKeyAuthorization({ ...policy, accessKeyAddress: accessKey.address });
   const signedWire = serializeSignedAuthorization(request.authorization, await rootAccount.sign({ hash: request.signPayload }));
-  const authorized = await rail.submitAuthorization({ account, signedWire });
+  const authorized = await rail.submitAuthorization({ account, signedWire, expected: { ...policy, accessKeyAddress: accessKey.address } });
   check(authorized.ok && authorized.tx !== null, `authorization failed: ${authorized.error}`);
   record('Root signs the key authorization (10.00 per 3600 s, transferWithMemo only, 3 recipients, expiry +24 h); the service submits it, the sponsor pays', 'key provisioned', authorized.tx, authorized.gasUsed);
 
   const status = await rail.keyStatus(account);
-  check(status.authorized && !status.revoked, 'the key is not authorized after the authorization landed');
+  check(status.authorized && status.live && status.mismatch.length === 0 && !status.revoked, 'the key is not authorized after the authorization landed');
   check(status.remaining === toBaseUnits('10.00'), `remaining after authorization is ${formatBaseUnits(status.remaining)}`);
   check(status.expiresAt === expiry * 1000, 'the key expiry differs from the one that was signed');
   check(status.scope.recipients?.length === 3 && status.scope.selectors?.length === 1 && status.scope.otherTargets.length === 0, 'the key scope differs from the one that was signed');
@@ -195,7 +195,7 @@ export async function runModeratoProof(options: ProofOptions = {}): Promise<Proo
   const overLimit = await rail.probeOverLimit({ account, to: recipients[0] });
   check(overLimit.includedOnChain && overLimit.reverted && overLimit.tx !== null, `the over-limit probe did not fail on chain: ${overLimit.error}`);
   check(overLimit.reason === 'SpendingLimitExceeded', `the over-limit probe reverted with ${overLimit.reason} (${overLimit.returnData})`);
-  record(`probeOverLimit: transferWithMemo of ${formatBaseUnits(budget + 1n)} with ${formatBaseUnits(budget)} left, sent without simulation`, `included and reverted: ${overLimit.reason} (${overLimit.returnData})`, overLimit.tx, overLimit.gasUsed);
+  record(`probeOverLimit: transferWithMemo of the largest amount there is, with ${formatBaseUnits(budget)} left, sent without simulation`, `included and reverted: ${overLimit.reason} (${overLimit.returnData})`, overLimit.tx, overLimit.gasUsed);
 
   const outOfScope = await rail.probeOutOfScope({ account, to: outsider });
   check(outOfScope.includedOnChain && outOfScope.reverted && outOfScope.tx !== null, `the out-of-scope probe did not fail on chain: ${outOfScope.error}`);
@@ -229,7 +229,7 @@ export async function runModeratoProof(options: ProofOptions = {}): Promise<Proo
   const secondWire = serializeSignedAuthorization(secondRequest.authorization, await rootAccount.sign({ hash: secondRequest.signPayload }));
   const run7 = 'HF-2026-10-0007';
   const lines7 = [0, 1].map((i) => ({ to: recipients[i] as string, amount: toBaseUnits('0.50'), memo: lineMemo(run7, i + 1) }));
-  const combined = await secondRail.submitAuthorization({ account, signedWire: secondWire, firstRun: { lines: lines7, runId: run7 } });
+  const combined = await secondRail.submitAuthorization({ account, signedWire: secondWire, expected: { ...policy, accessKeyAddress: secondAccessKey.address }, firstRun: { lines: lines7, runId: run7 } });
   check(combined.ok && combined.tx !== null, `authorization with a first run failed: ${combined.error}`);
   credit(lines7);
   check((await secondRail.remaining(account)).remaining === toBaseUnits('9.00'), 'the second key did not spend exactly 1.00');
