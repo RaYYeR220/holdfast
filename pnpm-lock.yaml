@@ -21,6 +21,42 @@ importers:
         specifier: ^5.0.3
         version: 5.0.3(@types/node@26.6.5)(vite@8.3.4(@types/node@26.6.5)(esbuild@0.28.2)(tsx@4.23.15))
 
+  apps/cli:
+    dependencies:
+      '@holdfast/books':
+        specifier: workspace:*
+        version: link:../../packages/books
+      '@holdfast/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@holdfast/engine':
+        specifier: workspace:*
+        version: link:../../packages/engine
+      '@holdfast/hyperliquid':
+        specifier: workspace:*
+        version: link:../../packages/hyperliquid
+      '@holdfast/intents':
+        specifier: workspace:*
+        version: link:../../packages/intents
+      '@holdfast/solana':
+        specifier: workspace:*
+        version: link:../../packages/solana
+      '@holdfast/tempo':
+        specifier: workspace:*
+        version: link:../../packages/tempo
+      '@holdfast/zcash':
+        specifier: workspace:*
+        version: link:../../packages/zcash
+
+  packages/books:
+    dependencies:
+      '@holdfast/core':
+        specifier: workspace:*
+        version: link:../core
+      '@holdfast/engine':
+        specifier: workspace:*
+        version: link:../engine
+
   packages/core:
     dependencies:
       '@noble/hashes':

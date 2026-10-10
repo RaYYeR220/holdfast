@@ -1,0 +1,12 @@
+{
+  "name": "@holdfast/books",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "test": "vitest run --passWithNoTests", "typecheck": "tsc -p tsconfig.json" },
+  "dependencies": {
+    "@holdfast/core": "workspace:*",
+    "@holdfast/engine": "workspace:*"
+  }
+}

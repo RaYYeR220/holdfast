@@ -1,0 +1,22 @@
+{
+  "name": "@holdfast/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": { "holdfast": "./src/main.ts" },
+  "scripts": {
+    "holdfast": "tsx src/main.ts",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@holdfast/books": "workspace:*",
+    "@holdfast/core": "workspace:*",
+    "@holdfast/engine": "workspace:*",
+    "@holdfast/hyperliquid": "workspace:*",
+    "@holdfast/intents": "workspace:*",
+    "@holdfast/solana": "workspace:*",
+    "@holdfast/tempo": "workspace:*",
+    "@holdfast/zcash": "workspace:*"
+  }
+}
