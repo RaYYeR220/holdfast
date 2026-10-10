@@ -62,7 +62,7 @@ function hashPair(a: Uint8Array, b: Uint8Array): Uint8Array {
  */
 export function merkleRoot(leaves: Hex[]): Hex {
   if (leaves.length === 0) return ZERO_ROOT;
-  let level = leaves.map((leaf) => {
+  let level: Uint8Array[] = leaves.map((leaf) => {
     const bytes = hexToBytes(leaf.slice(2));
     if (bytes.length !== 32) throw new RangeError('merkle leaves must be 32 bytes');
     return bytes;
