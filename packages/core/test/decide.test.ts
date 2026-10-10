@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { decide } from '../src/decide';
-import { DEFAULT_POLICY, type Policy } from '../src/policy';
+import type { Policy } from '../src/policy';
 import type { RefusalCode, Snapshot } from '../src/snapshot';
 import { roundPx } from '../src/units';
+import { LEAN_POLICY } from './fixtures';
 
 const NOW = 1_800_000_000_000;
 const PX = 1223.3;
@@ -36,7 +37,7 @@ function snap(over: {
 }
 
 const codes = (d: { refusals: { code: RefusalCode }[] }) => d.refusals.map((r) => r.code);
-const policy = (over: Partial<Policy> = {}): Policy => ({ ...DEFAULT_POLICY, ...over });
+const policy = (over: Partial<Policy> = {}): Policy => ({ ...LEAN_POLICY, ...over });
 
 describe('decide: holding and guards', () => {
   it('holds without venue data', () => {
@@ -205,8 +206,9 @@ describe('decide: rebalancing', () => {
   });
 });
 
-describe('decide: de-risk ladder', () => {
-  // 10 lots short at $1223.3 is $122.33 notional.
+describe('decide: cutting the short before liquidation', () => {
+  // 10 lots short at $1223.3 is $122.33 notional. The test policy cuts under
+  // a 20% margin ratio and keeps what the margin carries at 28%.
   const short10 = (equity: number, extra: Partial<Hl> = {}) =>
     snap({ treasuryZat: 10_000_000n, hl: { shortLots: 10, accountValueUsd: equity, ...extra } });
 
@@ -215,21 +217,25 @@ describe('decide: de-risk ladder', () => {
     expect(decide(snap({}), policy()).marginRatioBps).toBeNull();
   });
 
-  it('buys back a quarter under the first rung', () => {
-    const d = decide(short10(23), policy()); // 18.8%
+  it('keeps only the short the margin carries at the restore ratio', () => {
+    // $23 at 28% carries $82.14, which is 6 lots; 4 are bought back.
+    const d = decide(short10(23), policy());
     expect(d.mode).toBe('DERISK');
     expect(d.actions).toEqual([
-      { kind: 'reduceShort', lots: 3, limitPx: roundPx(PX * (1 + 30 / 10_000), 'buy') },
+      { kind: 'reduceShort', lots: 4, limitPx: roundPx(PX * (1 + 30 / 10_000), 'buy') },
     ]);
   });
 
-  it('uses the deepest rung that applies', () => {
-    expect(decide(short10(15), policy()).actions[0]).toMatchObject({ kind: 'reduceShort', lots: 5 }); // 12.3%
-    expect(decide(short10(10), policy()).actions[0]).toMatchObject({ kind: 'reduceShort', lots: 10 }); // 8.2%
+  it('cuts deeper the thinner the margin', () => {
+    expect(decide(short10(15), policy()).actions[0]).toMatchObject({ kind: 'reduceShort', lots: 6 });
+    expect(decide(short10(10), policy()).actions[0]).toMatchObject({ kind: 'reduceShort', lots: 8 });
+    expect(decide(short10(2), policy()).actions[0]).toMatchObject({ kind: 'reduceShort', lots: 10 });
     expect(decide(short10(-4), policy()).actions[0]).toMatchObject({ kind: 'reduceShort', lots: 10 });
   });
 
-  it('always buys back at least one lot and never more than the short', () => {
+  it('always buys back at least one lot', () => {
+    // 19.9% on 10 lots: the margin carries 7.1 lots, so 3 go.
+    expect(decide(short10(24.34), policy()).actions[0]).toMatchObject({ kind: 'reduceShort', lots: 3 });
     const one = decide(snap({ treasuryZat: 1_000_000n, hl: { shortLots: 1, accountValueUsd: 2 } }), policy());
     expect(one.actions).toEqual([{ kind: 'reduceShort', lots: 1, limitPx: roundPx(PX * 1.003, 'buy') }]);
   });
@@ -244,12 +250,12 @@ describe('decide: de-risk ladder', () => {
   it('works when the treasury and the reference price are unreadable', () => {
     const d = decide(snap({ treasuryZat: null, ref: null, hl: { shortLots: 10, accountValueUsd: 23 } }), policy());
     expect(d.mode).toBe('DERISK');
-    expect(d.actions[0]).toMatchObject({ kind: 'reduceShort', lots: 3 });
+    expect(d.actions[0]).toMatchObject({ kind: 'reduceShort', lots: 4 });
   });
 
-  it('does not reopen what it just bought back', () => {
-    // After buying back 3 of 10 lots at an 18.8% ratio the remaining 7 lots sit near 26.9%.
-    const after = decide(snap({ treasuryZat: 10_000_000n, hl: { shortLots: 7, accountValueUsd: 23 } }), policy());
+  it('does not sell again what it just bought back', () => {
+    // After the cut: 6 lots and, at best, the same $23.
+    const after = decide(snap({ treasuryZat: 10_000_000n, hl: { shortLots: 6, accountValueUsd: 23 } }), policy());
     expect(after.mode).toBe('HOLD');
     expect(after.actions).toEqual([]);
     expect(codes(after)).toEqual(['LEVERAGE_CAP']);

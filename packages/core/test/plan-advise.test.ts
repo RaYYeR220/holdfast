@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { advise } from '../src/advise';
 import { planLock } from '../src/plan-lock';
-import { DEFAULT_POLICY } from '../src/policy';
 import type { Snapshot } from '../src/snapshot';
+import { LEAN_POLICY as DEFAULT_POLICY } from './fixtures';
 
 const NOW = 1_800_000_000_000;
 const PX = 1223.3;

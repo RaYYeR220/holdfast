@@ -73,16 +73,17 @@ export function decide(s: Snapshot, p: Policy): Decision {
 
   const ratio = marginRatio(hl);
 
-  if (ratio !== null) {
-    const ratioBps = ratio * 10_000;
-    const rung = p.deRisk.filter((r) => ratioBps < r.marginRatioBps).at(-1);
-    if (rung !== undefined) {
-      const lots = Math.min(hl.shortLots, Math.max(1, Math.ceil((hl.shortLots * rung.reduceBps) / 10_000)));
-      reasons.push(
-        `margin ratio ${ratioBps.toFixed(0)} bps is under the ${rung.marginRatioBps} bps rung: buying back ${lots} of ${hl.shortLots} lots`,
-      );
-      return done('DERISK', [buyBack(lots, hl, p)], null, ratio);
-    }
+  if (ratio !== null && ratio * 10_000 < p.deRiskTriggerBps) {
+    // Keep only the short the remaining margin carries at the restore ratio.
+    // The restore ratio sits under the leverage floor, so the lots bought back
+    // here cannot be sold again until fresh margin arrives.
+    const carried = Math.floor((hl.accountValueUsd * 100) / ((p.deRiskRestoreBps / 10_000) * hl.markPx));
+    const keep = Math.min(hl.shortLots - 1, Math.max(0, carried));
+    const lots = hl.shortLots - keep;
+    reasons.push(
+      `margin ratio ${(ratio * 10_000).toFixed(0)} bps is under the ${p.deRiskTriggerBps} bps trigger: buying back ${lots} of ${hl.shortLots} lots`,
+    );
+    return done('DERISK', [buyBack(lots, hl, p)], null, ratio);
   }
 
   const treasury = s.treasury;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { type Bar, type BacktestInput, backtest } from '../src/backtest';
-import { DEFAULT_POLICY } from '../src/policy';
+import { LEAN_POLICY as DEFAULT_POLICY } from './fixtures';
 
 const HOUR = 3_600_000;
 const T0 = 1_780_000_000_000;

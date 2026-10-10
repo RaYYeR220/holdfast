@@ -37,10 +37,9 @@ export function advise(s: Snapshot, p: Policy): Advisory[] {
   if (ratio !== null) {
     const ratioBps = ratio * 10_000;
     const notional = notionalUsd(hl.shortLots, hl.markPx);
-    const firstRungBps = p.deRisk[0]?.marginRatioBps ?? 0;
     if (ratioBps < p.topUpWarnBps) {
       topUpUsd = notional * target - hl.accountValueUsd;
-      if (ratioBps < firstRungBps) severity = 'critical';
+      if (ratioBps < p.deRiskTriggerBps) severity = 'critical';
     } else if (ratioBps > p.sweepAboveBps) {
       const excess = floorCents(hl.accountValueUsd - notional * target);
       if (excess > 0) out.push({ kind: 'SWEEP_EXCESS_MARGIN', usd: excess });

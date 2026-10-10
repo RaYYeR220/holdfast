@@ -9,7 +9,8 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json",
-    "fetch-data": "tsx scripts/fetch-market-data.ts"
+    "fetch-data": "tsx scripts/fetch-market-data.ts",
+    "scorecard": "tsx scripts/scorecard.ts"
   },
   "dependencies": {
     "@noble/hashes": "^2.4.0"

@@ -180,7 +180,7 @@ export function backtest(i: BacktestInput): BacktestResult {
         px,
         swapCostBps: i.swapCostBps,
         maintenanceBps: i.maintenanceBps,
-        firstRungBps: p.deRisk[0]?.marginRatioBps ?? 0,
+        firstRungBps: p.deRiskTriggerBps,
       });
       if (plan.sellZat > 0n) {
         const gross = zatToZec(plan.sellZat) * px;

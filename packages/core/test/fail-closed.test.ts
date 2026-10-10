@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { advise } from '../src/advise';
 import { decide } from '../src/decide';
 import { MAX_FUTURE_SKEW_MS, isFresh } from '../src/freshness';
-import { DEFAULT_POLICY, type Policy } from '../src/policy';
+import type { Policy } from '../src/policy';
 import type { Snapshot } from '../src/snapshot';
+import { LEAN_POLICY as DEFAULT_POLICY } from './fixtures';
 
 const NOW = 1_800_000_000_000;
 const PX = 1223.3;
@@ -112,7 +113,7 @@ describe('decide fails closed on bad input', () => {
     const broken: Policy[] = [
       { ...DEFAULT_POLICY, maxLeverage: Number.NaN },
       { ...DEFAULT_POLICY, maxSlippageBps: -5 },
-      { ...DEFAULT_POLICY, deRisk: [] },
+      { ...DEFAULT_POLICY, deRiskRestoreBps: 1_000 },
       { ...DEFAULT_POLICY, maxDataAgeMs: Number.POSITIVE_INFINITY },
       {} as Policy,
     ];

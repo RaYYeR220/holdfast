@@ -1,10 +1,3 @@
-export interface DeRiskRung {
-  /** Margin ratio (equity / short notional) below which this rung fires. */
-  marginRatioBps: number;
-  /** Share of the current short to buy back when it fires. */
-  reduceBps: number;
-}
-
 export interface Policy {
   /** Share of the treasury's ZEC to hedge. */
   hedgeRatioBps: number;
@@ -14,8 +7,13 @@ export interface Policy {
   maxLeverage: number;
   /** Margin ratio a fresh lock or a top-up aims for. */
   marginTargetBps: number;
-  /** Buy-backs that keep the short away from liquidation, highest ratio first. */
-  deRisk: DeRiskRung[];
+  /** Margin ratio (equity / short notional) below which the short is cut. */
+  deRiskTriggerBps: number;
+  /**
+   * Margin ratio the cut brings the short back to. Kept under the leverage
+   * floor so the controller cannot sell again what it has just bought back.
+   */
+  deRiskRestoreBps: number;
   /** Margin ratio below which the treasurer is asked to add margin. */
   topUpWarnBps: number;
   /** Margin ratio above which excess margin is offered back. */
@@ -34,15 +32,12 @@ export interface Policy {
 export const DEFAULT_POLICY: Policy = {
   hedgeRatioBps: 10_000,
   bandLots: 1,
-  maxLeverage: 3,
-  marginTargetBps: 4_500,
-  deRisk: [
-    { marginRatioBps: 2_000, reduceBps: 2_500 },
-    { marginRatioBps: 1_300, reduceBps: 5_000 },
-    { marginRatioBps: 900, reduceBps: 10_000 },
-  ],
-  topUpWarnBps: 3_000,
-  sweepAboveBps: 9_000,
+  maxLeverage: 2,
+  marginTargetBps: 8_000,
+  deRiskTriggerBps: 2_000,
+  deRiskRestoreBps: 3_000,
+  topUpWarnBps: 6_400,
+  sweepAboveBps: 16_000,
   maxSlippageBps: 30,
   fundingFloorAprBps: -500,
   maxMarkOracleDivBps: 100,
@@ -98,39 +93,16 @@ export function validatePolicy(input: unknown): PolicyValidation {
   range('maxOracleRefDivBps', 1, 2_000);
   range('maxDataAgeMs', 1_000, 3_600_000);
   range('minOrderUsd', 0, 1_000_000, false);
-
-  const rungs = p.deRisk;
-  if (!Array.isArray(rungs) || rungs.length === 0) {
-    errors.push('deRisk must be a non-empty list');
-  }
+  range('deRiskTriggerBps', 1, 10_000);
+  range('deRiskRestoreBps', 1, 10_000);
   if (errors.length > 0) return { ok: false, errors };
 
   const leverageFloorBps = 10_000 / (p.maxLeverage as number);
-  let previous = Number.POSITIVE_INFINITY;
-  for (const [i, raw] of (rungs as unknown[]).entries()) {
-    const rung = raw as Partial<DeRiskRung> | null;
-    if (
-      typeof rung !== 'object' ||
-      rung === null ||
-      !isInt(rung.marginRatioBps) ||
-      !isInt(rung.reduceBps) ||
-      Object.keys(rung).length !== 2
-    ) {
-      errors.push(`deRisk[${i}] must be { marginRatioBps, reduceBps }`);
-      continue;
-    }
-    if (rung.marginRatioBps <= 0 || rung.marginRatioBps >= leverageFloorBps) {
-      errors.push(
-        `deRisk[${i}].marginRatioBps must be below the leverage floor of ${Math.floor(leverageFloorBps)} bps`,
-      );
-    }
-    if (rung.reduceBps <= 0 || rung.reduceBps > 10_000) {
-      errors.push(`deRisk[${i}].reduceBps must be in (0, 10000]`);
-    }
-    if (rung.marginRatioBps >= previous) {
-      errors.push(`deRisk[${i}] must be listed from the highest margin ratio to the lowest`);
-    }
-    previous = rung.marginRatioBps;
+  const trigger = p.deRiskTriggerBps as number;
+  const restore = p.deRiskRestoreBps as number;
+  if (restore <= trigger) errors.push('deRiskRestoreBps must be above deRiskTriggerBps');
+  if (restore >= leverageFloorBps) {
+    errors.push(`deRiskRestoreBps must be below the leverage floor of ${Math.floor(leverageFloorBps)} bps`);
   }
 
   const target = p.marginTargetBps as number;
