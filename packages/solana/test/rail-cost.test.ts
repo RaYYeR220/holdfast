@@ -154,7 +154,7 @@ describe('preview', () => {
     world.node.unreachable.add('getSignaturesForAddress');
     expect(await preview(lines(1))).toEqual({
       ok: false,
-      error: 'connect ECONNREFUSED',
+      error: `could not rule out that run ${RUN_ID} was already paid: connect ECONNREFUSED`,
       paidBy: null,
       lineMemos: false,
       cost: null,

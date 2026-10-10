@@ -5,7 +5,7 @@ import { describeFailure, describeTransactionError } from './errors';
 import { isSameRequest, type Payee } from './payees';
 import { payoutInstructions, type PayoutPlan } from './payout';
 import { identifyRun, prepareRun, type RunInput, type RunRequest } from './prepare';
-import { findRunOnChain, isSameRun, type PaidLine } from './reconcile';
+import { isSameRun, type PaidLine } from './reconcile';
 import { refused, type PayoutPreview, type SolanaPayoutResult } from './results';
 
 /** A transaction that was sent for a run, kept until its fate is known. */
@@ -26,6 +26,11 @@ interface PaidRun {
 
 const REMEMBERED_RUNS = 1_000;
 
+/** Not knowing is not the same as not paid: this is what a run is turned down with when the chain cannot say. */
+function notRuledOut(runId: string, error: unknown): string {
+  return `could not rule out that run ${runId} was already paid: ${describeFailure(error)}`;
+}
+
 /** What a paid plan looks like when it is read back from the chain. */
 function paidLines(plan: PayoutPlan): PaidLine[] {
   return plan.transfers.map(({ tokenAccount, amount, memo }) => ({
@@ -43,7 +48,7 @@ function paidLines(plan: PayoutPlan): PaidLine[] {
  * which is asked before anything is sent.
  */
 export function createRunPayer(context: RailContext) {
-  const { rpc, mint, commitment, following } = context;
+  const { rpc, commitment, following } = context;
 
   /** Calls to pay() that have not returned yet. */
   const underway = new Map<string, { payees: Payee[]; result: Promise<SolanaPayoutResult> }>();
@@ -68,14 +73,20 @@ export function createRunPayer(context: RailContext) {
     return paid;
   }
 
-  /** The run as paid, from memory or else from the chain. Throws when the chain cannot be asked. */
-  async function lookUpPaid(request: RunRequest): Promise<PaidRun | null> {
+  /**
+   * The payment of a run, from memory or else from the chain, and whether it
+   * has settled. Null means the chain proves there is none. Throws when that
+   * cannot be established, which callers must never read as "not paid".
+   */
+  async function lookUpPaid(request: RunRequest): Promise<{ paid: PaidRun; settled: boolean } | null> {
     const key = keyOf(request);
     const remembered = paidRuns.get(key);
-    if (remembered) return remembered;
-    const { runId, source, signer } = request;
-    const found = await findRunOnChain(rpc, { runId, source, mint, delegate: signer.address }, commitment);
-    return found ? remember(key, { tx: found.signature, transfers: found.transfers, cost: null }) : null;
+    if (remembered) return { paid: remembered, settled: true };
+    const { runId, source, notBefore } = request;
+    const found = await context.findPaid({ runId, source }, notBefore);
+    if (!found) return null;
+    const paid = { tx: found.run.signature, transfers: found.run.transfers, cost: null };
+    return { paid: found.settled ? remember(key, paid) : paid, settled: found.settled };
   }
 
   /** Answer a request for a run that has been paid: with its transaction, or with a refusal if the lines differ. */
@@ -85,6 +96,16 @@ export function createRunPayer(context: RailContext) {
     }
     const lineMemos = paid.transfers.some(transfer => transfer.memo !== null);
     return { ok: true, outcome: 'paid', tx: paid.tx, error: null, replayed: true, lineMemos, cost: paid.cost };
+  }
+
+  /** Answer a request for a run whose payment is on chain but has not settled: neither paid nor unpaid yet. */
+  function answerPending({ runId, payees }: RunRequest, { tx, transfers }: PaidRun): SolanaPayoutResult {
+    if (!isSameRun(transfers, payees)) {
+      return refused(`run ${runId} is already on chain as ${tx} with different lines; nothing was sent for these`);
+    }
+    const error = `run ${runId} is on chain as ${tx} but has not reached ${commitment} yet`;
+    const lineMemos = transfers.some(transfer => transfer.memo !== null);
+    return { ok: false, outcome: 'unknown', tx, error, replayed: true, lineMemos, cost: null };
   }
 
   /** Report where an attempt stands, and stop tracking it once that is final. */
@@ -119,16 +140,16 @@ export function createRunPayer(context: RailContext) {
   async function settleEarlier(request: RunRequest): Promise<SolanaPayoutResult | null> {
     const { runId } = request;
     const key = keyOf(request);
-    let paid: PaidRun | null;
+    let earlierPayment: Awaited<ReturnType<typeof lookUpPaid>>;
     try {
-      paid = await lookUpPaid(request);
+      earlierPayment = await lookUpPaid(request);
     } catch (error) {
-      // Not knowing is not the same as not paid.
-      return refused(`could not check whether run ${runId} was already paid (${describeFailure(error)}); nothing was sent`);
+      return refused(`${notRuledOut(runId, error)}; nothing was sent`);
     }
-    if (paid) {
+    if (earlierPayment) {
+      if (!earlierPayment.settled) return answerPending(request, earlierPayment.paid);
       unsettled.delete(key);
-      return answerPaid(request, paid);
+      return answerPaid(request, earlierPayment.paid);
     }
 
     const earlier = unsettled.get(key);
@@ -209,12 +230,23 @@ export function createRunPayer(context: RailContext) {
       const request = await identifyRun(context, i);
       if (typeof request === 'string') return turnedDown(request);
 
-      const paid = await lookUpPaid(request);
-      if (paid) {
+      let earlierPayment: Awaited<ReturnType<typeof lookUpPaid>>;
+      try {
+        earlierPayment = await lookUpPaid(request);
+      } catch (error) {
+        return turnedDown(notRuledOut(request.runId, error));
+      }
+      if (earlierPayment) {
+        const { paid, settled } = earlierPayment;
         const same = isSameRun(paid.transfers, request.payees);
+        const problem = !same
+          ? `run ${request.runId} was already paid by ${paid.tx} with different lines`
+          : settled
+            ? null
+            : `run ${request.runId} is on chain as ${paid.tx} but has not reached ${commitment} yet`;
         return {
-          ok: same,
-          error: same ? null : `run ${request.runId} was already paid by ${paid.tx} with different lines`,
+          ok: problem === null,
+          error: problem,
           paidBy: paid.tx,
           lineMemos: paid.transfers.some(transfer => transfer.memo !== null),
           cost: paid.cost,

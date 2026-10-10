@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_MEMO_LENGTH, parseSignatureMemos, validateMemo } from '../src/memo';
+import { leadingSignatureMemo, MAX_MEMO_LENGTH, parseSignatureMemos, validateMemo } from '../src/memo';
 
 describe('validateMemo', () => {
   it('accepts run ids and invoice references', () => {
@@ -64,5 +64,27 @@ describe('parseSignatureMemos', () => {
     expect(parseSignatureMemos('[2] ok; garbage')).toEqual(['ok']);
     expect(parseSignatureMemos('[99] too short')).toEqual([]);
     expect(parseSignatureMemos('[x] nope')).toEqual([]);
+  });
+});
+
+describe('leadingSignatureMemo', () => {
+  it('is the first memo of a field that parses from end to end', () => {
+    expect(leadingSignatureMemo('[15] HF-2026-10-0001')).toBe('HF-2026-10-0001');
+    expect(leadingSignatureMemo('[15] HF-2026-10-0001; [8] INV-1041')).toBe('HF-2026-10-0001');
+    expect(leadingSignatureMemo('[0] ; [0] ')).toBe('');
+  });
+
+  it('says nothing when the node reports no memo, which is not the same as there being none', () => {
+    expect(leadingSignatureMemo(null)).toBeNull();
+    expect(leadingSignatureMemo(undefined)).toBeNull();
+    expect(leadingSignatureMemo('')).toBeNull();
+  });
+
+  it('says nothing about a field in any other format, even one that starts well', () => {
+    expect(leadingSignatureMemo('HF-2026-10-0001')).toBeNull();
+    expect(leadingSignatureMemo('[15] HF-2026-10-0001; garbage')).toBeNull();
+    expect(leadingSignatureMemo('[15] HF-2026-10-0001[8] INV-1041')).toBeNull();
+    expect(leadingSignatureMemo('[99] too short')).toBeNull();
+    expect(leadingSignatureMemo('[15] HF-2026-10-0001; ')).toBeNull();
   });
 });

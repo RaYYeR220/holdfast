@@ -23,6 +23,7 @@ export function validateMemo(memo: string): string | null {
 
 const OPEN_BRACKET = 0x5b;
 const CLOSE_BRACKET = 0x5d;
+const SEMICOLON = 0x3b;
 const SPACE = 0x20;
 
 /**
@@ -35,7 +36,25 @@ const SPACE = 0x20;
  * reliably, because a memo may itself contain "; [".
  */
 export function parseSignatureMemos(field: string | null): string[] {
-  if (field === null) return [];
+  return field === null ? [] : scanSignatureMemos(field).memos;
+}
+
+/**
+ * The first memo of a transaction as far as a `getSignaturesForAddress`
+ * entry can be taken at its word, or null when it cannot.
+ *
+ * A null field does not mean the transaction has no memo: a node that does
+ * not index the Memo program in use reports null for every transaction. The
+ * same goes for a field in some other format. Only a field that parses from
+ * end to end says anything, and then it says which memo comes first.
+ */
+export function leadingSignatureMemo(field: string | null | undefined): string | null {
+  if (field === null || field === undefined) return null;
+  const { memos, complete } = scanSignatureMemos(field);
+  return complete ? (memos[0] ?? null) : null;
+}
+
+function scanSignatureMemos(field: string): { memos: string[]; complete: boolean } {
   const bytes = new TextEncoder().encode(field);
   const decoder = new TextDecoder();
   const memos: string[] = [];
@@ -48,7 +67,10 @@ export function parseSignatureMemos(field: string | null): string[] {
     const end = start + Number(digits);
     if (!/^\d+$/.test(digits) || end > bytes.length) break;
     memos.push(decoder.decode(bytes.subarray(start, end)));
-    at = end + 2;
+    at = end;
+    if (at === bytes.length) return { memos, complete: true };
+    if (bytes[at] !== SEMICOLON || bytes[at + 1] !== SPACE) break;
+    at += 2;
   }
-  return memos;
+  return { memos, complete: false };
 }

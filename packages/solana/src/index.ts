@@ -26,4 +26,6 @@ export type { PayoutCost } from './cost';
 export { MAX_MEMO_LENGTH, parseSignatureMemos, validateMemo } from './memo';
 export { createSolanaPayoutRail, type SolanaPayoutRail } from './rail';
 export type { PayoutRun, RunTransfer } from './reconcile';
+export type { RunInput } from './prepare';
 export type { AllowanceProbe, PayoutOutcome, PayoutPreview, SolanaPayoutResult } from './results';
+export { UnprovenAbsence } from './search';

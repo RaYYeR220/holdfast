@@ -10,12 +10,10 @@ import {
   CONFIRMED,
   createWorld,
   decodeWire,
-  historyEntry,
   LATER_BLOCKHASH,
   MINT,
   OWNER,
   payee,
-  recorded,
   signedWire,
   type World,
 } from './world';
@@ -36,6 +34,9 @@ const pay = (lines: PayoutLine[] = LINES, rail: SolanaPayoutRail = world.rail) =
   rail.pay({ account: OWNER, lines, runId: RUN_ID });
 const wires = (): string[] => [...new Set(world.sent.map(sent => sent.wire))];
 const firstSignature = (): string => decodeWire(world.sent[0]?.wire ?? '').signature;
+/** The wire transaction a pay() call sent. */
+const wireOf = (result: { tx: string | null }): string =>
+  world.sent.find(sent => decodeWire(sent.wire).signature === result.tx)?.wire ?? '';
 
 /** Pay the run and let the node's history show it. */
 async function payAndLand(lines: PayoutLine[] = LINES) {
@@ -141,18 +142,24 @@ describe('telling a paid run from something that only looks like one', () => {
         decimals: 6,
       }),
     ]);
-    world.answers.signatures = () => [historyEntry(forged.signature, `[15] ${RUN_ID}`)];
-    world.answers.transaction = () => recorded(forged.wire, { [world.source]: OWNER });
+    const { entry } = world.record(forged.wire);
+    expect(entry.memo).toBe(`[15] ${RUN_ID}`);
 
     expect(await pay()).toMatchObject({ ok: true, outcome: 'paid', replayed: false });
     expect(world.sent).toHaveLength(1);
   });
 
   it('pays a run whose only earlier attempt failed on chain', async () => {
-    const failure = { InstructionError: [2, { Custom: 1 }] };
-    world.answers.signatures = () => [historyEntry('failed-attempt', `[15] ${RUN_ID}`, failure)];
-    expect(await pay()).toMatchObject({ ok: true, outcome: 'paid', replayed: false });
-    expect(world.node.methods()).not.toContain('getTransaction');
+    const first = await pay();
+    const failed = await world.land(wireOf(first), LINES, { err: { InstructionError: [2, { Custom: 1 }] } });
+    world.sent.length = 0;
+    const restarted = world.restart();
+    world.answers.blockhash = () => LATER_BLOCKHASH;
+
+    expect(await pay(LINES, restarted)).toMatchObject({ ok: true, outcome: 'paid', replayed: false });
+    expect(world.sent).toHaveLength(1);
+    const fetched = world.node.calls.filter(call => call.method === 'getTransaction').map(call => call.params[0]);
+    expect(fetched).not.toContain(failed.entry.signature);
   });
 
   it('refuses to pay when the history cannot be read', async () => {
@@ -161,18 +168,11 @@ describe('telling a paid run from something that only looks like one', () => {
       ok: false,
       outcome: 'refused',
       tx: null,
-      error: `could not check whether run ${RUN_ID} was already paid (connect ECONNREFUSED); nothing was sent`,
+      error: `could not rule out that run ${RUN_ID} was already paid: connect ECONNREFUSED; nothing was sent`,
       replayed: false,
       lineMemos: false,
       cost: null,
     });
-    expect(world.sent).toEqual([]);
-  });
-
-  it('refuses to pay when a candidate in the history cannot be read', async () => {
-    world.answers.signatures = () => [historyEntry('candidate', `[15] ${RUN_ID}`)];
-    world.node.unreachable.add('getTransaction');
-    expect(await pay()).toMatchObject({ ok: false, outcome: 'refused', tx: null });
     expect(world.sent).toEqual([]);
   });
 });

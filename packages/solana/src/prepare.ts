@@ -9,7 +9,18 @@ import { lamportsShort, payoutCost, type PayoutCost } from './cost';
 import { identifyPayees, resolveTransfers, type Payee } from './payees';
 import { fitsOneTransaction, payoutShape, type PayoutPlan } from './payout';
 
-export type RunInput = { account: string; lines: PayoutLine[]; runId: string };
+export interface RunInput {
+  account: string;
+  lines: PayoutLine[];
+  runId: string;
+  /**
+   * A slot before which this run cannot have been paid, such as the one
+   * `checkpoint()` returned when the run was created. It bounds the search
+   * for an earlier payment, which otherwise has to read the history of the
+   * paying account back to its creation and refuses to pay when it cannot.
+   */
+  notBefore?: bigint;
+}
 
 /** A run as asked for, checked and resolved as far as that goes without the node. */
 export interface RunRequest {
@@ -18,6 +29,7 @@ export interface RunRequest {
   /** The team's token account. */
   source: Address;
   payees: Payee[];
+  notBefore?: bigint;
 }
 
 /** A run that may be sent, or the reason it may not, with its cost where that got worked out. */
@@ -28,7 +40,10 @@ export async function identifyRun(context: RailContext, i: RunInput): Promise<Ru
   const signer = await context.delegate();
   const source = await associatedTokenAddress(i.account, context.mint);
   const payees = await identifyPayees(i.lines, i.runId, context.mint, source);
-  return typeof payees === 'string' ? payees : { runId: i.runId, signer, source, payees };
+  if (typeof payees === 'string') return payees;
+  if (i.notBefore === undefined) return { runId: i.runId, signer, source, payees };
+  if (i.notBefore < 0n) return `invalid notBefore ${i.notBefore}`;
+  return { runId: i.runId, signer, source, payees, notBefore: i.notBefore };
 }
 
 /**

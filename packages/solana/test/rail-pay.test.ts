@@ -87,7 +87,7 @@ describe('pay: checks before anything is sent', () => {
       lineMemos: false,
       cost: null,
     });
-    expect(world.node.methods()).toEqual(['getSignaturesForAddress', 'getAccountInfo']);
+    expect(world.node.methods()).toEqual(['getSignaturesForAddress', 'getTransaction', 'getAccountInfo']);
   });
 
   it('refuses every run once the delegation is gone', async () => {

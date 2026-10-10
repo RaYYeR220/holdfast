@@ -97,6 +97,13 @@ async function eventually<T>(read: () => Promise<T>, settled: (value: T) => bool
   return value;
 }
 
+/**
+ * pay() refuses whenever the node cannot show that a run is unpaid, which a
+ * node a slot or two behind does for a moment after every transaction. A
+ * refusal sends nothing, so asking again is safe.
+ */
+const couldNotRuleOut = (result: { error: string | null }): boolean => /^could not rule out/.test(result.error ?? '');
+
 /** Facts about a landed transaction, quoted from the node rather than from our own bookkeeping. */
 async function describeOnChain(rpc: SolanaRpc, signature: string): Promise<string[]> {
   const response = await eventually(
@@ -214,17 +221,23 @@ export async function runProof(options: ProofOptions): Promise<ProofReport> {
     { to: second, amount: amount('2.5'), memo: 'INV-1042 audit milestone 2' },
     { to: third, amount: amount('0.75'), memo: 'INV-1043 translation' },
   ];
-  const run1 = { account: owner.address, lines, runId: RUN_ID };
+  // The run comes into being here. Nothing that pays it can be older than
+  // this slot, which bounds every later search for its payment.
+  const notBefore = await rail.checkpoint();
+  const run1 = { account: owner.address, lines, runId: RUN_ID, notBefore };
+  const payWhenReadable = (run: Parameters<typeof rail.pay>[0], through = rail): Promise<SolanaPayoutResult> =>
+    eventually(() => through.pay(run), result => !couldNotRuleOut(result));
 
-  const priced = await rail.preview(run1);
+  const priced = await eventually(() => rail.preview(run1), preview => !couldNotRuleOut(preview));
   assert.ok(priced.ok && priced.cost, `preview turned the run down: ${priced.error}`);
   assert.equal(priced.cost.newTokenAccounts, 3);
   step('preview() prices the run before anything is sent', null, [
+    `the run is bounded below by slot ${notBefore}, taken from checkpoint() when it was created`,
     `${priced.cost.newTokenAccounts} payee token accounts to create: ${priced.cost.rentLamports} lamports of rent ` +
       `from the delegate, plus a fee of ${priced.cost.feeLamports} lamports`,
   ]);
 
-  const refusedOverAccountLimit = await rail.pay({
+  const refusedOverAccountLimit = await payWhenReadable({
     account: owner.address,
     lines: [...lines, { to: stranger, amount: amount('0.01'), memo: 'one new account too many' }],
     runId: 'HF-2026-10-0009',
@@ -235,7 +248,7 @@ export async function runProof(options: ProofOptions): Promise<ProofReport> {
     `error: ${refusedOverAccountLimit.error}`,
   ]);
 
-  const payout = await rail.pay(run1);
+  const payout = await payWhenReadable(run1);
   assert.ok(payout.outcome === 'paid' && payout.tx, `payout failed: ${payout.error}`);
   const remainingAfterRun = await remaining(amount('5.75'));
   assert.equal(remainingAfterRun, amount('5.75'));
@@ -245,7 +258,10 @@ export async function runProof(options: ProofOptions): Promise<ProofReport> {
     `remaining() = ${show(remainingAfterRun)}`,
   ]);
 
-  const run = await eventually(() => rail.findRun(owner.address, RUN_ID), found => found !== null);
+  const run = await eventually(
+    () => rail.findRun(owner.address, RUN_ID, { notBefore }).catch(() => null),
+    found => found !== null,
+  );
   assert.ok(run, 'the run is found by its memo');
   assert.equal(run.signature, payout.tx);
   assert.deepEqual(
@@ -259,7 +275,7 @@ export async function runProof(options: ProofOptions): Promise<ProofReport> {
     `total ${show(run.total)}`,
   ]);
 
-  const replay = await rail.pay(run1);
+  const replay = await payWhenReadable(run1);
   assert.ok(replay.ok && replay.replayed, `the replay was not recognised: ${replay.error}`);
   assert.equal(replay.tx, payout.tx);
   // A rail that starts afresh has only the chain to go by. Let it see the run
@@ -267,7 +283,7 @@ export async function runProof(options: ProofOptions): Promise<ProofReport> {
   const restarted = createSolanaPayoutRail(railConfig);
   const seen = await eventually(() => restarted.preview(run1), preview => preview.paidBy !== null);
   assert.equal(seen.paidBy, payout.tx);
-  const replayAfterRestart = await restarted.pay(run1);
+  const replayAfterRestart = await payWhenReadable(run1, restarted);
   assert.ok(replayAfterRestart.ok && replayAfterRestart.replayed);
   assert.equal(replayAfterRestart.tx, payout.tx);
   assert.equal(await remaining(remainingAfterRun), remainingAfterRun, 'a replay pays nothing');
@@ -277,7 +293,7 @@ export async function runProof(options: ProofOptions): Promise<ProofReport> {
     `remaining() = ${show(remainingAfterRun)}`,
   ]);
 
-  const refusedDifferentLines = await rail.pay({
+  const refusedDifferentLines = await payWhenReadable({
     ...run1,
     lines: lines.map((line, index) => (index === 0 ? { ...line, amount: amount('1.5') } : line)),
   });
@@ -285,7 +301,7 @@ export async function runProof(options: ProofOptions): Promise<ProofReport> {
   assert.match(refusedDifferentLines.error ?? '', /was already paid by .* with different lines/);
   step('pay() refuses the same run id with different lines', null, [`error: ${refusedDifferentLines.error}`]);
 
-  const refusedBeforeSending = await rail.pay({
+  const refusedBeforeSending = await payWhenReadable({
     account: owner.address,
     lines: [{ to: first, amount: remainingAfterRun + 1n, memo: 'one base unit too many' }],
     runId: 'HF-2026-10-0002',
@@ -328,7 +344,7 @@ export async function runProof(options: ProofOptions): Promise<ProofReport> {
     `remaining() = ${show(remainingAfterRevoke)}`,
   ]);
 
-  const refusedAfterRevoke = await rail.pay({
+  const refusedAfterRevoke = await payWhenReadable({
     account: owner.address,
     lines: [{ to: first, amount: amount('0.01'), memo: 'after revoke' }],
     runId: 'HF-2026-10-0003',

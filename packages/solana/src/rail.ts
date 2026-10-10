@@ -4,9 +4,10 @@ import { createRailContext, type SolanaPayoutRailConfig } from './context';
 import { describeFailure } from './errors';
 import type { RunInput } from './prepare';
 import { probeOverAllowance } from './probe';
-import { findRunOnChain, type PayoutRun } from './reconcile';
+import type { PayoutRun } from './reconcile';
 import { refused, type AllowanceProbe, type PayoutPreview, type SolanaPayoutResult } from './results';
 import { createRunPayer } from './runs';
+import { UnprovenAbsence } from './search';
 
 export interface SolanaPayoutRail extends PayoutRail {
   chain: 'solana';
@@ -25,8 +26,18 @@ export interface SolanaPayoutRail extends PayoutRail {
    * new payee token accounts and in fees. Never throws.
    */
   preview(i: RunInput): Promise<PayoutPreview>;
-  /** Rebuild a paid run from chain data alone; null when no such run succeeded. */
-  findRun(account: string, runId: string): Promise<PayoutRun | null>;
+  /**
+   * A slot that is safely in the past. Record it when a run is created and
+   * pass it to pay() and findRun() as `notBefore`: the run cannot have been
+   * paid before it, so the search for a payment may stop there.
+   */
+  checkpoint(): Promise<bigint>;
+  /**
+   * Rebuild a paid run from chain data alone. Null means the chain proves no
+   * such run was paid. When that cannot be established, or the run has not
+   * reached the commitment of the rail yet, this throws instead.
+   */
+  findRun(account: string, runId: string, options?: { notBefore?: bigint }): Promise<PayoutRun | null>;
   /**
    * Send a transfer of one base unit more than the allowance and report that
    * the Token program refused it. The transaction skips preflight so the
@@ -72,10 +83,19 @@ export function createSolanaPayoutRail(config: SolanaPayoutRailConfig): SolanaPa
       }
     },
 
-    async findRun(account: string, runId: string): Promise<PayoutRun | null> {
-      const signer = await context.delegate();
+    async checkpoint(): Promise<bigint> {
+      // Whatever is sent from now on lands after the slot the chain has already finalized.
+      return rpc.getSlot({ commitment: 'finalized' }).send();
+    },
+
+    async findRun(account, runId, options = {}): Promise<PayoutRun | null> {
       const source = await associatedTokenAddress(account, mint);
-      return findRunOnChain(rpc, { runId, source, mint, delegate: signer.address }, commitment);
+      const found = await context.findPaid({ runId, source }, options.notBefore);
+      if (found && !found.settled) {
+        const { signature } = found.run;
+        throw new UnprovenAbsence(`run ${runId} is on chain as ${signature} but has not reached ${commitment} yet`);
+      }
+      return found?.run ?? null;
     },
 
     async probeOverAllowance(i): Promise<AllowanceProbe> {
