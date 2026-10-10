@@ -31,6 +31,12 @@ importers:
         specifier: ^4.10.2
         version: 4.10.2
 
+  packages/engine:
+    dependencies:
+      '@holdfast/core':
+        specifier: workspace:*
+        version: link:../core
+
   packages/hyperliquid:
     dependencies:
       '@holdfast/core':
