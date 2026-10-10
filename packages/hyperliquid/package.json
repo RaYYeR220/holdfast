@@ -1,0 +1,13 @@
+{
+  "name": "@holdfast/hyperliquid",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "test": "vitest run --passWithNoTests", "typecheck": "tsc -p tsconfig.json" },
+  "dependencies": {
+    "@holdfast/core": "workspace:*",
+    "@nktkas/hyperliquid": "^0.33.3",
+    "viem": "^2.57.4"
+  }
+}
