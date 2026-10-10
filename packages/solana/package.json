@@ -4,7 +4,11 @@
   "private": true,
   "type": "module",
   "exports": { ".": "./src/index.ts" },
-  "scripts": { "test": "vitest run --passWithNoTests", "typecheck": "tsc -p tsconfig.json" },
+  "scripts": {
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json",
+    "devnet-proof": "tsx scripts/devnet-proof.ts"
+  },
   "dependencies": {
     "@holdfast/core": "workspace:*",
     "@solana/kit": "^8.4.0",
