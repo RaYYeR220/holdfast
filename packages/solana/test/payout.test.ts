@@ -8,14 +8,30 @@ import {
 } from '@solana/kit';
 import { getMemosFromInstructions } from '@solana-program/memo';
 import {
+  parseAllocateWithSeedInstruction,
+  parseTransferSolInstruction,
+  SYSTEM_PROGRAM_ADDRESS,
+} from '@solana-program/system';
+import {
   ASSOCIATED_TOKEN_PROGRAM_ADDRESS,
   parseCreateAssociatedTokenIdempotentInstruction,
   parseTransferCheckedInstruction,
   TOKEN_PROGRAM_ADDRESS,
 } from '@solana-program/token';
 import { describe, expect, it } from 'vitest';
+import { MARKER_INSTRUCTION_INDEX } from '../src/marker';
 import { fitsOneTransaction, PAYOUT_MEMO_PROGRAM_ADDRESS, payoutInstructions, payoutMessage } from '../src/payout';
-import { DELEGATE, MINT, payeeOf, planOf, RUN_ID, SOURCE, tokenAccountOf } from './fixtures';
+import {
+  DELEGATE,
+  MARKER,
+  MARKER_LAMPORTS,
+  MINT,
+  payeeOf,
+  planOf,
+  RUN_ID,
+  SOURCE,
+  tokenAccountOf,
+} from './fixtures';
 
 /** The instructions as a node would read them back from the wire. */
 function compiled(plan: ReturnType<typeof planOf>): ResolvedInstruction[] {
@@ -39,10 +55,12 @@ describe('payoutInstructions', () => {
     { memo: 'INV-1043', create: true, amount: 750_000n },
   ]);
 
-  it('puts the run memo first, then create / transfer / memo for each line in order', () => {
+  it('puts the run memo first, then the run marker, then create / transfer / memo for each line in order', () => {
     const instructions = compiled(plan);
     expect(programs(instructions)).toEqual([
       PAYOUT_MEMO_PROGRAM_ADDRESS,
+      SYSTEM_PROGRAM_ADDRESS,
+      SYSTEM_PROGRAM_ADDRESS,
       ASSOCIATED_TOKEN_PROGRAM_ADDRESS,
       TOKEN_PROGRAM_ADDRESS,
       PAYOUT_MEMO_PROGRAM_ADDRESS,
@@ -54,9 +72,9 @@ describe('payoutInstructions', () => {
     ]);
     expect(getMemosFromInstructions(instructions).map(({ index, memo }) => [index, memo])).toEqual([
       [0, RUN_ID],
-      [3, 'INV-1041'],
-      [5, 'INV-1042'],
-      [8, 'INV-1043'],
+      [5, 'INV-1041'],
+      [7, 'INV-1042'],
+      [10, 'INV-1043'],
     ]);
   });
 
@@ -64,9 +82,26 @@ describe('payoutInstructions', () => {
     expect(PAYOUT_MEMO_PROGRAM_ADDRESS).toBe('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
   });
 
+  it('funds the run marker from the delegate', () => {
+    const { accounts, data } = parseTransferSolInstruction(parts(compiled(plan)[1]));
+    expect(accounts.source).toEqual({ address: DELEGATE, role: AccountRole.WRITABLE_SIGNER });
+    expect(accounts.destination).toEqual({ address: MARKER.address, role: AccountRole.WRITABLE });
+    expect(data.amount).toBe(MARKER_LAMPORTS);
+  });
+
+  it('sets the run marker before any transfer: one byte at a seed address of the delegate, owned by the System program', () => {
+    const instruction = parts(compiled(plan)[MARKER_INSTRUCTION_INDEX]);
+    const { accounts, data } = parseAllocateWithSeedInstruction(instruction);
+    expect(instruction.accounts).toHaveLength(2);
+    expect(accounts.newAccount).toEqual({ address: MARKER.address, role: AccountRole.WRITABLE });
+    expect(accounts.baseAccount).toEqual({ address: DELEGATE, role: AccountRole.WRITABLE_SIGNER });
+    expect(data).toMatchObject({ base: DELEGATE, seed: MARKER.seed, space: 1n, programAddress: SYSTEM_PROGRAM_ADDRESS });
+    expect(programs(compiled(plan)).indexOf(TOKEN_PROGRAM_ADDRESS)).toBeGreaterThan(MARKER_INSTRUCTION_INDEX);
+  });
+
   it('transfers from the team account under the authority of the delegate', () => {
     const instructions = compiled(plan);
-    const transfers = [2, 4, 7].map(index => parseTransferCheckedInstruction(parts(instructions[index])));
+    const transfers = [4, 6, 9].map(index => parseTransferCheckedInstruction(parts(instructions[index])));
     expect(transfers.map(({ data }) => data.amount)).toEqual([1_000_000n, 2_500_000n, 750_000n]);
     for (const [line, { accounts, data }] of transfers.entries()) {
       expect(accounts.source).toEqual({ address: SOURCE, role: AccountRole.WRITABLE });
@@ -80,8 +115,8 @@ describe('payoutInstructions', () => {
   it('creates a missing payee token account idempotently, paid for by the delegate', () => {
     const instructions = compiled(plan);
     for (const [index, line] of [
-      [1, 0],
-      [6, 2],
+      [3, 0],
+      [8, 2],
     ] as const) {
       const { accounts, data } = parseCreateAssociatedTokenIdempotentInstruction(parts(instructions[index]));
       expect(data.discriminator).toBe(1);
@@ -103,6 +138,8 @@ describe('payoutInstructions', () => {
     const instructions = payoutInstructions(planOf([{ memo: '' }, { memo: 'INV-7' }]));
     expect(instructions.map(instruction => instruction.programAddress)).toEqual([
       PAYOUT_MEMO_PROGRAM_ADDRESS,
+      SYSTEM_PROGRAM_ADDRESS,
+      SYSTEM_PROGRAM_ADDRESS,
       TOKEN_PROGRAM_ADDRESS,
       TOKEN_PROGRAM_ADDRESS,
       PAYOUT_MEMO_PROGRAM_ADDRESS,
@@ -124,10 +161,10 @@ describe('fitsOneTransaction', () => {
   const run = (lines: number, create: boolean) => planOf(Array.from({ length: lines }, () => ({ create })));
 
   it('accepts a run up to the byte limit and rejects the first one over it', () => {
-    expect(fitsOneTransaction(run(19, false))).toBe(true);
-    expect(fitsOneTransaction(run(20, false))).toBe(false);
-    expect(fitsOneTransaction(run(9, true))).toBe(true);
-    expect(fitsOneTransaction(run(10, true))).toBe(false);
+    expect(fitsOneTransaction(run(15, false))).toBe(true);
+    expect(fitsOneTransaction(run(16, false))).toBe(false);
+    expect(fitsOneTransaction(run(7, true))).toBe(true);
+    expect(fitsOneTransaction(run(8, true))).toBe(false);
   });
 
   it('rejects, rather than throws on, a run with more instructions than a transaction may have', () => {
@@ -135,11 +172,11 @@ describe('fitsOneTransaction', () => {
   });
 
   it('counts a payee that is paid twice only once', () => {
-    const twenty = run(20, false);
-    const [first] = twenty.transfers;
+    const sixteen = run(16, false);
+    const [first] = sixteen.transfers;
     if (!first) throw new Error('fixture has lines');
-    const transfers = twenty.transfers.map(transfer => ({ ...transfer, tokenAccount: first.tokenAccount }));
-    const repeated = { ...twenty, transfers };
+    const transfers = sixteen.transfers.map(transfer => ({ ...transfer, tokenAccount: first.tokenAccount }));
+    const repeated = { ...sixteen, transfers };
     expect(fitsOneTransaction(repeated)).toBe(true);
   });
 });

@@ -1,5 +1,4 @@
 import type { PayoutLine } from '@holdfast/core';
-import { address } from '@solana/kit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { associatedTokenAddress } from '../src/accounts';
 import { payoutInstructions, type PayoutPlan } from '../src/payout';
@@ -18,30 +17,13 @@ beforeEach(async () => {
   world = await createWorld();
 });
 
-async function planFor(lines: readonly PayoutLine[], lineMemos = true, runId = RUN_ID): Promise<PayoutPlan> {
-  return {
-    delegate: world.delegate,
-    source: world.source,
-    mint: MINT,
-    decimals: 6,
-    runId,
-    lineMemos,
-    transfers: await Promise.all(
-      lines.map(async line => ({
-        payee: address(line.to),
-        tokenAccount: await associatedTokenAddress(line.to, MINT),
-        amount: line.amount,
-        memo: line.memo,
-        createTokenAccount: true,
-      })),
-    ),
-  };
-}
+const planFor = (lines: readonly PayoutLine[], lineMemos = true, runId = RUN_ID): Promise<PayoutPlan> =>
+  world.planFor(lines, { runId, lineMemos });
 
-/** Put a payout of `lines` into the history, as if some rail had paid it. */
+/** Let a payout of `lines` land, as if some rail had paid it. */
 async function landRun(lines: readonly PayoutLine[] = LINES, lineMemos = true, runId = RUN_ID) {
   const { wire } = await signedWire(world.delegate, payoutInstructions(await planFor(lines, lineMemos, runId)));
-  return world.land(wire, lines);
+  return world.record(wire);
 }
 
 const fetched = (): unknown[] =>
@@ -89,7 +71,7 @@ describe('findRun', () => {
 
   it('skips a failed attempt, which keeps its memo in the history', async () => {
     const { wire } = await signedWire(world.delegate, payoutInstructions(await planFor([LINES[0] as PayoutLine])));
-    const failed = await world.land(wire, LINES, { err: { InstructionError: [2, { Custom: 1 }] } });
+    const failed = await world.record(wire, { err: { InstructionError: [4, { Custom: 1 }] } });
     const paid = await landRun();
     expect((await world.rail.findRun(OWNER, RUN_ID))?.signature).toBe(paid.entry.signature);
     expect(fetched()).not.toContain(failed.entry.signature);

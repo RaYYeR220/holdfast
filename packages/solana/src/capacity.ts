@@ -10,13 +10,17 @@ const BLOCKHASH_BYTES = 32;
 const VERSION_PREFIX_BYTES = 1;
 const MESSAGE_HEADER_BYTES = 3;
 
-/** delegate, source token account, mint, Token program, Memo program */
-const FIXED_ACCOUNTS = 5;
-/** Associated Token program and System program, needed once any token account is created. */
-const CREATION_ACCOUNTS = 2;
+/** delegate, source token account, mint, run marker, Token program, Memo program, System program */
+const FIXED_ACCOUNTS = 7;
+/** The Associated Token program, needed once any token account is created. */
+const CREATION_ACCOUNTS = 1;
 
 const TRANSFER_CHECKED = { accounts: 4, data: 10 };
 const CREATE_TOKEN_ACCOUNT = { accounts: 6, data: 1 };
+/** The two instructions that set the run marker: a transfer and an AllocateWithSeed with a 32 byte seed. */
+const FUND_MARKER = { accounts: 2, data: 12 };
+const ALLOCATE_MARKER = { accounts: 2, data: 116 };
+const MARKER_INSTRUCTIONS = 2;
 
 export interface PayoutLineShape {
   /** Bytes of the line's memo, 0 when it carries none. */
@@ -48,9 +52,11 @@ export function payoutTransactionSize(shape: PayoutShape): number {
   const created = shape.lines.filter(line => line.createsTokenAccount).length;
   const memos = shape.lines.filter(line => line.memoBytes > 0);
   const accounts = FIXED_ACCOUNTS + shape.lines.length + created + (created > 0 ? CREATION_ACCOUNTS : 0);
-  const instructions = 1 + shape.lines.length + created + memos.length;
+  const instructions = 1 + MARKER_INSTRUCTIONS + shape.lines.length + created + memos.length;
   const instructionData =
     instructionBytes(0, shape.runIdBytes) +
+    instructionBytes(FUND_MARKER.accounts, FUND_MARKER.data) +
+    instructionBytes(ALLOCATE_MARKER.accounts, ALLOCATE_MARKER.data) +
     shape.lines.length * instructionBytes(TRANSFER_CHECKED.accounts, TRANSFER_CHECKED.data) +
     created * instructionBytes(CREATE_TOKEN_ACCOUNT.accounts, CREATE_TOKEN_ACCOUNT.data) +
     memos.reduce((bytes, line) => bytes + instructionBytes(0, line.memoBytes), 0);

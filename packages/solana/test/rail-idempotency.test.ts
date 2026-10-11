@@ -6,23 +6,14 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { PAYOUT_MEMO_PROGRAM_ADDRESS } from '../src/payout';
 import type { SolanaPayoutRail } from '../src/rail';
 import { addressOf } from './fake-node';
-import {
-  CONFIRMED,
-  createWorld,
-  decodeWire,
-  LATER_BLOCKHASH,
-  MINT,
-  OWNER,
-  payee,
-  signedWire,
-  type World,
-} from './world';
+import { createWorld, decodeWire, LATER_BLOCKHASH, MINT, OWNER, payee, signedWire, type World } from './world';
 
 const RUN_ID = 'HF-2026-10-0001';
 const LINES: PayoutLine[] = [
   { to: payee(0), amount: 1_000_000n, memo: 'INV-1041' },
   { to: payee(1), amount: 2_500_000n, memo: 'INV-1042' },
 ];
+const TOKEN_PROGRAM_REFUSAL = { InstructionError: [4, { Custom: 1 }] };
 
 let world: World;
 beforeEach(async () => {
@@ -34,25 +25,15 @@ const pay = (lines: PayoutLine[] = LINES, rail: SolanaPayoutRail = world.rail) =
   rail.pay({ account: OWNER, lines, runId: RUN_ID });
 const wires = (): string[] => [...new Set(world.sent.map(sent => sent.wire))];
 const firstSignature = (): string => decodeWire(world.sent[0]?.wire ?? '').signature;
-/** The wire transaction a pay() call sent. */
-const wireOf = (result: { tx: string | null }): string =>
-  world.sent.find(sent => decodeWire(sent.wire).signature === result.tx)?.wire ?? '';
 
-/** Pay the run and let the node's history show it. */
-async function payAndLand(lines: PayoutLine[] = LINES) {
-  const result = await pay(lines);
-  await world.land(world.sent[0]?.wire ?? '', lines);
-  return result;
-}
-
-const COST = { newTokenAccounts: 2, rentLamports: 4_078_560n, feeLamports: 5_000n };
+const COST = { newTokenAccounts: 2, rentLamports: 4_078_560n, markerLamports: 897_840n, feeLamports: 5_000n };
 
 describe.each([
   { asked: 'the rail that paid it', rail: () => world.rail, cost: COST },
   { asked: 'a restarted rail, which has only the chain to go by', rail: () => world.restart(), cost: null },
 ])('a run that is already paid, asked of $asked', ({ rail, cost }) => {
   it('is answered with the transaction that paid it, and nothing is sent', async () => {
-    const first = await payAndLand();
+    const first = await pay();
     const second = await pay(LINES, rail());
     expect(first).toMatchObject({ ok: true, outcome: 'paid', replayed: false });
     expect(second).toEqual({
@@ -63,19 +44,20 @@ describe.each([
       replayed: true,
       lineMemos: true,
       cost,
+      historyError: null,
     });
     expect(world.sent).toHaveLength(1);
   });
 
   it('is recognised even when the allowance it used up is gone', async () => {
-    const first = await payAndLand();
+    const first = await pay();
     world.fund({ amount: 96_500_000n });
     expect(await pay(LINES, rail())).toMatchObject({ ok: true, outcome: 'paid', tx: first.tx, replayed: true });
     expect(world.sent).toHaveLength(1);
   });
 
   it('is refused, not paid again, when the lines asked for differ from the lines paid', async () => {
-    const first = await payAndLand();
+    const first = await pay();
     const again = rail();
     const [one, two] = LINES;
     if (!one || !two) throw new Error('fixture has two lines');
@@ -96,6 +78,7 @@ describe.each([
         replayed: false,
         lineMemos: false,
         cost: null,
+        historyError: null,
       });
     }
     expect(world.sent).toHaveLength(1);
@@ -107,7 +90,7 @@ describe.each([
       await world.openTokenAccount(payee(index));
       lines.push({ to: payee(index), amount: 1_000n, memo: `INV-${1000 + index} ${'x'.repeat(31)}` });
     }
-    const first = await payAndLand(lines);
+    const first = await pay(lines);
     const again = rail();
     const reworded = lines.map(line => ({ ...line, memo: 'a different memo' }));
     expect(first).toMatchObject({ ok: true, lineMemos: false });
@@ -118,9 +101,10 @@ describe.each([
 });
 
 describe('a rail that has just paid a run', () => {
-  it('answers for it from memory, whatever a lagging node says about the history', async () => {
+  it('answers for it from memory, whatever a lagging node says', async () => {
     const first = await pay();
     world.answers.signatures = () => [];
+    world.answers.account = () => null;
     world.node.calls.length = 0;
     expect(await pay()).toMatchObject({ ok: true, outcome: 'paid', tx: first.tx, replayed: true });
     expect(world.node.calls).toEqual([]);
@@ -142,7 +126,7 @@ describe('telling a paid run from something that only looks like one', () => {
         decimals: 6,
       }),
     ]);
-    const { entry } = world.record(forged.wire);
+    const { entry } = await world.record(forged.wire);
     expect(entry.memo).toBe(`[15] ${RUN_ID}`);
 
     expect(await pay()).toMatchObject({ ok: true, outcome: 'paid', replayed: false });
@@ -150,30 +134,33 @@ describe('telling a paid run from something that only looks like one', () => {
   });
 
   it('pays a run whose only earlier attempt failed on chain', async () => {
-    const first = await pay();
-    const failed = await world.land(wireOf(first), LINES, { err: { InstructionError: [2, { Custom: 1 }] } });
-    world.sent.length = 0;
-    const restarted = world.restart();
-    world.answers.blockhash = () => LATER_BLOCKHASH;
+    world.answers.failsOnChain = () => TOKEN_PROGRAM_REFUSAL;
+    const failed = await pay();
+    expect(failed).toMatchObject({ ok: false, outcome: 'failed' });
+    expect(await world.isMarked(RUN_ID)).toBe(false);
 
-    expect(await pay(LINES, restarted)).toMatchObject({ ok: true, outcome: 'paid', replayed: false });
-    expect(world.sent).toHaveLength(1);
+    world.answers.failsOnChain = () => null;
+    world.answers.blockhash = () => LATER_BLOCKHASH;
+    world.node.calls.length = 0;
+    expect(await pay(LINES, world.restart())).toMatchObject({ ok: true, outcome: 'paid', replayed: false });
+    expect(wires()).toHaveLength(2);
     const fetched = world.node.calls.filter(call => call.method === 'getTransaction').map(call => call.params[0]);
-    expect(fetched).not.toContain(failed.entry.signature);
+    expect(fetched).not.toContain(failed.tx);
   });
 
-  it('refuses to pay when the history cannot be read', async () => {
+  it('pays a run when the history cannot be read, and says that it was not', async () => {
     world.node.unreachable.add('getSignaturesForAddress');
     expect(await pay()).toEqual({
-      ok: false,
-      outcome: 'refused',
-      tx: null,
-      error: `could not rule out that run ${RUN_ID} was already paid: connect ECONNREFUSED; nothing was sent`,
+      ok: true,
+      outcome: 'paid',
+      tx: firstSignature(),
+      error: null,
       replayed: false,
-      lineMemos: false,
-      cost: null,
+      lineMemos: true,
+      cost: COST,
+      historyError: 'connect ECONNREFUSED',
     });
-    expect(world.sent).toEqual([]);
+    expect(world.sent).toHaveLength(1);
   });
 });
 
@@ -188,13 +175,11 @@ describe('a run whose confirmation timed out', () => {
     const result = await pay();
     expect(result).toMatchObject({ ok: false, outcome: 'unknown', tx: firstSignature(), replayed: false });
     expect(result.error).toMatch(/was sent and its outcome is unknown \(connect ECONNREFUSED\); it may still pay/);
-    expect(result.cost).toEqual({ newTokenAccounts: 2, rentLamports: 4_078_560n, feeLamports: 5_000n });
+    expect(result.cost).toEqual(COST);
   });
 
   it('is found on chain by the next pay, which returns the first signature and sends nothing', async () => {
     const first = await pay();
-    await world.land(world.sent[0]?.wire ?? '', LINES);
-
     const second = await pay();
     expect(first).toMatchObject({ outcome: 'unknown', tx: firstSignature() });
     expect(second).toMatchObject({ ok: true, outcome: 'paid', tx: first.tx, replayed: true, error: null });
@@ -203,15 +188,14 @@ describe('a run whose confirmation timed out', () => {
 
   it('is found on chain by the next pay after a restart too', async () => {
     const first = await pay();
-    await world.land(world.sent[0]?.wire ?? '', LINES);
     expect(await pay(LINES, world.restart())).toMatchObject({ ok: true, outcome: 'paid', tx: first.tx, replayed: true });
     expect(wires()).toHaveLength(1);
   });
 
   it('is followed, not sent again, while the first transaction could still land', async () => {
+    world.answers.drops = () => true;
     const first = await pay();
     world.node.unreachable.clear();
-    world.answers.status = () => null;
     world.answers.blockHeight = () => 999;
     world.answers.blockhash = () => LATER_BLOCKHASH;
 
@@ -219,15 +203,16 @@ describe('a run whose confirmation timed out', () => {
     expect(second).toMatchObject({ ok: false, outcome: 'unknown', tx: first.tx, replayed: true });
     expect(wires()).toHaveLength(1);
 
-    world.answers.status = () => CONFIRMED;
+    await world.record(world.sent[0]?.wire ?? '');
     expect(await pay()).toMatchObject({ ok: true, outcome: 'paid', tx: first.tx, replayed: true });
     expect(wires()).toHaveLength(1);
   });
 
   it('is sent afresh once the first transaction has provably expired', async () => {
+    world.answers.drops = () => true;
     const first = await pay();
     world.node.unreachable.clear();
-    world.answers.status = signature => (signature === first.tx ? null : CONFIRMED);
+    world.answers.drops = () => false;
     world.answers.blockHeight = () => 1_001;
     world.answers.blockhash = () => LATER_BLOCKHASH;
 
@@ -238,21 +223,22 @@ describe('a run whose confirmation timed out', () => {
   });
 
   it('is sent afresh once the first transaction has failed on chain', async () => {
+    world.answers.failsOnChain = () => TOKEN_PROGRAM_REFUSAL;
     const first = await pay();
     world.node.unreachable.clear();
-    const failed = { ...CONFIRMED, err: { InstructionError: [2, { Custom: 1 }] } };
-    world.answers.status = signature => (signature === first.tx ? failed : CONFIRMED);
+    world.answers.failsOnChain = () => null;
     world.answers.blockhash = () => LATER_BLOCKHASH;
 
     const second = await pay();
+    expect(first).toMatchObject({ outcome: 'unknown' });
     expect(second).toMatchObject({ ok: true, outcome: 'paid', replayed: false });
     expect(second.tx).not.toBe(first.tx);
   });
 
   it('is not replaced by different lines under the same run id while it is unsettled', async () => {
+    world.answers.drops = () => true;
     const first = await pay();
     world.node.unreachable.clear();
-    world.answers.status = () => null;
     world.answers.blockHeight = () => 999;
 
     const other = await pay([{ to: payee(7), amount: 5n, memo: '' }]);

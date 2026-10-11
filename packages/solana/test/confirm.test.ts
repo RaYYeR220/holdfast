@@ -3,9 +3,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { broadcastOf, follow, sendAndConfirm, type SendOptions } from '../src/confirm';
 import { connect } from '../src/connection';
 import { describeTransactionError } from '../src/errors';
-import { payoutInstructions } from '../src/payout';
+import { memoInstruction } from '../src/payout';
 import { NodeError } from './fake-node';
-import { planOf } from './fixtures';
 import { CHAIN_SLOT, CONFIRMED, createWorld, signedWire, type World } from './world';
 
 let world: World;
@@ -17,8 +16,7 @@ const rpc = () => connect({ rpcUrl: 'http://fake', transport: world.node.transpo
 const statusQueries = () => world.node.calls.filter(call => call.method === 'getSignatureStatuses');
 
 async function broadcast() {
-  const plan = planOf([{}], { delegate: world.delegate });
-  const { wire } = await signedWire(world.delegate, payoutInstructions(plan));
+  const { wire } = await signedWire(world.delegate, [memoInstruction('a transaction to follow')]);
   const transaction = getTransactionDecoder().decode(getBase64Encoder().encode(wire));
   assertIsSendableTransaction(transaction);
   return broadcastOf(transaction, 1_000n);
@@ -56,9 +54,12 @@ describe('sendAndConfirm', () => {
     expect(world.node.methods()).toEqual(['sendTransaction']);
   });
 
-  it('keeps following a transaction whose send request was cut off', async () => {
+  it('gets a transaction through by sending it again when the first send was cut off', async () => {
     world.node.unreachable.add('sendTransaction');
-    expect((await send()).outcome.status).toBe('landed');
+    setTimeout(() => world.node.unreachable.clear(), 10);
+    const { outcome, signature } = await send({ pollIntervalMs: 5 });
+    expect(outcome).toEqual({ status: 'landed', signature, err: null });
+    expect(world.landed.has(signature)).toBe(true);
   });
 });
 

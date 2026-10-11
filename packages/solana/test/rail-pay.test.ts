@@ -11,7 +11,17 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { associatedTokenAddress } from '../src/accounts';
 import { PAYOUT_MEMO_PROGRAM_ADDRESS } from '../src/payout';
 import { accountInfo, addressOf, NodeError } from './fake-node';
-import { CONFIRMED, createWorld, decodeWire, MINT, OWNER, payee, TOKEN_ACCOUNT_RENT, type World } from './world';
+import {
+  CONFIRMED,
+  createWorld,
+  decodeWire,
+  MARKER_RENT,
+  MINT,
+  OWNER,
+  payee,
+  TOKEN_ACCOUNT_RENT,
+  type World,
+} from './world';
 
 const RUN_ID = 'HF-2026-10-0001';
 const line = (index: number, amount: bigint, memo = ''): PayoutLine => ({ to: payee(index), amount, memo });
@@ -26,14 +36,9 @@ const broadcasts = (): number => world.node.methods().filter(method => method ==
 const costOf = (newTokenAccounts: number) => ({
   newTokenAccounts,
   rentLamports: BigInt(newTokenAccounts * TOKEN_ACCOUNT_RENT),
+  markerLamports: BigInt(MARKER_RENT),
   feeLamports: 5_000n,
 });
-
-/** Answer with each value once, then keep repeating the last. */
-function inTurn<T>(values: readonly T[]): () => T | undefined {
-  let next = 0;
-  return () => values[Math.min(next++, values.length - 1)];
-}
 
 describe('remaining', () => {
   it('is the delegated amount when the delegate is the service key', async () => {
@@ -86,8 +91,14 @@ describe('pay: checks before anything is sent', () => {
       replayed: false,
       lineMemos: false,
       cost: null,
+      historyError: null,
     });
-    expect(world.node.methods()).toEqual(['getSignaturesForAddress', 'getTransaction', 'getAccountInfo']);
+    expect(world.node.methods()).toEqual([
+      'getMultipleAccounts',
+      'getSignaturesForAddress',
+      'getTransaction',
+      'getAccountInfo',
+    ]);
   });
 
   it('refuses every run once the delegation is gone', async () => {
@@ -117,13 +128,11 @@ describe('pay: checks before anything is sent', () => {
     expect((await pay([line(0, 1n, 'Zahlung für Oktober')])).error).toMatch(/line 1: memo must be printable ASCII/);
     expect((await pay([line(0, 1n)], '')).error).toMatch(/run id: memo is empty/);
     expect((await pay([line(0, 1n)], 'x'.repeat(65))).error).toMatch(/run id: memo is longer/);
+    expect((await pay([{ to: 'alice.sol', amount: 1n, memo: '' }])).error).toBe('line 1: "alice.sol" is not a Solana address');
+    expect((await pay([{ to: OWNER, amount: 1n, memo: '' }])).error).toBe('line 1: the payee is the paying account itself');
+    const stranger = await world.rail.pay({ account: 'treasury', lines: [line(0, 1n)], runId: RUN_ID });
+    expect(stranger.error).toBe('"treasury" is not a Solana address');
     expect(world.node.calls).toEqual([]);
-  });
-
-  it('refuses a payee that is not an address', async () => {
-    const result = await pay([{ to: 'alice.sol', amount: 1n, memo: '' }]);
-    expect(result.error).toBe('line 1: "alice.sol" is not a Solana address');
-    expect(broadcasts()).toBe(0);
   });
 
   it('refuses a payee address that is itself a token account', async () => {
@@ -133,19 +142,13 @@ describe('pay: checks before anything is sent', () => {
     expect(broadcasts()).toBe(0);
   });
 
-  it('refuses to pay the team account from itself', async () => {
-    const result = await pay([{ to: OWNER, amount: 1n, memo: '' }]);
-    expect(result.error).toBe('line 1: the payee is the paying account itself');
-    expect(broadcasts()).toBe(0);
-  });
-
   it('refuses a run too large for one transaction instead of splitting it', async () => {
     world.fund({ amount: 100_000_000n, delegate: world.delegate.address, delegatedAmount: 100_000_000n });
-    const lines = Array.from({ length: 20 }, (_, index) => line(index, 1_000n));
+    const lines = Array.from({ length: 16 }, (_, index) => line(index, 1_000n));
     for (let index = 0; index < lines.length; index++) await world.openTokenAccount(payee(index));
     const result = await pay(lines);
     expect(result).toMatchObject({ ok: false, outcome: 'refused', tx: null });
-    expect(result.error).toMatch(/^run does not fit in one transaction: 20 lines need about 1262 bytes/);
+    expect(result.error).toMatch(/^run does not fit in one transaction: 16 lines need about 1268 bytes/);
     expect(broadcasts()).toBe(0);
   });
 
@@ -161,12 +164,6 @@ describe('pay: checks before anything is sent', () => {
     world.node.unreachable.add('getAccountInfo');
     expect(await pay([line(0, 1n)])).toMatchObject({ ok: false, outcome: 'refused', tx: null, error: 'connect ECONNREFUSED' });
     await expect(world.rail.remaining(OWNER)).rejects.toThrow('connect ECONNREFUSED');
-  });
-
-  it('reports a paying account that is not an address instead of throwing', async () => {
-    const result = await world.rail.pay({ account: 'treasury', lines: [line(0, 1n)], runId: RUN_ID });
-    expect(result).toMatchObject({ ok: false, tx: null });
-    expect(world.node.calls).toEqual([]);
   });
 });
 
@@ -185,7 +182,7 @@ describe('pay: the transaction it sends', () => {
     expect(world.sent).toHaveLength(1);
     const sent = world.sent[0];
     if (!sent) throw new Error('nothing was sent');
-    const { instructions, signers, accounts } = decodeWire(sent.wire);
+    const { instructions, signers, signed, accounts } = decodeWire(sent.wire);
 
     expect(result).toEqual({
       ok: true,
@@ -195,13 +192,17 @@ describe('pay: the transaction it sends', () => {
       replayed: false,
       lineMemos: true,
       cost: costOf(2),
+      historyError: null,
     });
     expect(signers).toEqual([world.delegate.address]);
+    expect(signed).toEqual([world.delegate.address]);
     expect(accounts).not.toContain(OWNER);
     expect(sent.config.skipPreflight).toBe(false);
 
     expect(instructions.map(instruction => instruction.programAddress)).toEqual([
       PAYOUT_MEMO_PROGRAM_ADDRESS,
+      SYSTEM_PROGRAM_ADDRESS,
+      SYSTEM_PROGRAM_ADDRESS,
       ASSOCIATED_TOKEN_PROGRAM_ADDRESS,
       TOKEN_PROGRAM_ADDRESS,
       PAYOUT_MEMO_PROGRAM_ADDRESS,
@@ -243,8 +244,7 @@ describe('pay: the transaction it sends', () => {
   it('creates the token account of a payee paid twice only once', async () => {
     await pay([line(0, 1_000_000n, 'INV-1'), line(0, 2_000_000n, 'INV-2')]);
     const { instructions } = decodeWire(world.sent[0]?.wire ?? '');
-    expect(instructions.map(instruction => instruction.programAddress)).toEqual([
-      PAYOUT_MEMO_PROGRAM_ADDRESS,
+    expect(instructions.slice(3).map(instruction => instruction.programAddress)).toEqual([
       ASSOCIATED_TOKEN_PROGRAM_ADDRESS,
       TOKEN_PROGRAM_ADDRESS,
       PAYOUT_MEMO_PROGRAM_ADDRESS,
@@ -257,7 +257,7 @@ describe('pay: the transaction it sends', () => {
     world.accounts.set(await associatedTokenAddress(payee(0), MINT), accountInfo(SYSTEM_PROGRAM_ADDRESS));
     await pay([line(0, 1_000_000n)]);
     const { instructions } = decodeWire(world.sent[0]?.wire ?? '');
-    expect(instructions[1]?.programAddress).toBe(ASSOCIATED_TOKEN_PROGRAM_ADDRESS);
+    expect(instructions[3]?.programAddress).toBe(ASSOCIATED_TOKEN_PROGRAM_ADDRESS);
   });
 
   it('drops the line memos, all of them, when the run only fits without', async () => {
@@ -270,7 +270,7 @@ describe('pay: the transaction it sends', () => {
     const { instructions } = decodeWire(world.sent[0]?.wire ?? '');
     expect(result).toMatchObject({ ok: true, outcome: 'paid', lineMemos: false });
     expect(getMemosFromInstructions(instructions).map(({ memo }) => memo)).toEqual([RUN_ID]);
-    expect(instructions).toHaveLength(13);
+    expect(instructions).toHaveLength(15);
   });
 });
 
@@ -279,24 +279,37 @@ describe('pay: what the chain answers', () => {
     world.fund({ amount: 100_000_000n, delegate: world.delegate.address, delegatedAmount: 10_000_000n });
   });
 
-  it('reports a transaction that landed and failed, with its signature', async () => {
-    world.answers.status = () => ({ ...CONFIRMED, err: { InstructionError: [2, { Custom: 1 }] } });
+  it('reports a transaction that landed and failed, with its signature, and leaves the run unmarked', async () => {
+    world.answers.failsOnChain = () => ({ InstructionError: [4, { Custom: 1 }] });
     const result = await pay([line(0, 1_000_000n)]);
     expect(result).toEqual({
       ok: false,
       outcome: 'failed',
       tx: decodeWire(world.sent[0]?.wire ?? '').signature,
-      error: 'instruction 2 failed: custom program error 0x1 (Token program: InsufficientFunds)',
+      error: 'instruction 4 failed: custom program error 0x1 (Token program: InsufficientFunds)',
       replayed: false,
       lineMemos: false,
       cost: costOf(1),
+      historyError: null,
     });
+    expect(await world.isMarked(RUN_ID)).toBe(false);
+  });
+
+  it('pays a run again after an attempt that failed on chain', async () => {
+    world.answers.failsOnChain = () => ({ InstructionError: [4, { Custom: 1 }] });
+    const failed = await pay([line(0, 1_000_000n)]);
+    world.answers.failsOnChain = () => null;
+    world.answers.blockhash = () => addressOf(23);
+    const paid = await pay([line(0, 1_000_000n)]);
+    expect(paid).toMatchObject({ ok: true, outcome: 'paid', replayed: false });
+    expect(paid.tx).not.toBe(failed.tx);
+    expect(await world.isMarked(RUN_ID)).toBe(true);
   });
 
   it('reports a failed preflight simulation as not sent', async () => {
     world.answers.send = () => {
       throw new NodeError(-32002, 'Transaction simulation failed', {
-        err: { InstructionError: [2, { Custom: 17 }] },
+        err: { InstructionError: [4, { Custom: 17 }] },
         logs: [],
       });
     };
@@ -305,31 +318,35 @@ describe('pay: what the chain answers', () => {
       ok: false,
       outcome: 'refused',
       tx: null,
-      error: 'simulation failed: instruction 2 failed: custom program error 0x11 (Token program: AccountFrozen)',
+      error: 'simulation failed: instruction 4 failed: custom program error 0x11 (Token program: AccountFrozen)',
       replayed: false,
       lineMemos: false,
       cost: costOf(1),
+      historyError: null,
     });
     expect(world.node.methods()).not.toContain('getSignatureStatuses');
   });
 
   it('waits for the commitment level before calling a run paid', async () => {
-    world.answers.status = inTurn([null, { ...CONFIRMED, confirmationStatus: 'processed' }, CONFIRMED]);
+    const statuses = [null, { ...CONFIRMED, confirmationStatus: 'processed' }, CONFIRMED];
+    let polls = 0;
+    world.answers.status = () => statuses[Math.min(polls++, statuses.length - 1)];
     const result = await pay([line(0, 1_000_000n)]);
     expect(result.ok).toBe(true);
-    expect(world.node.methods().filter(method => method === 'getSignatureStatuses')).toHaveLength(3);
+    expect(polls).toBe(3);
   });
 
   it('reports a transaction whose blockhash provably expired as failed, never as unknown', async () => {
-    world.answers.status = () => null;
+    world.answers.drops = () => true;
     world.answers.blockHeight = () => 1_001;
     const result = await pay([line(0, 1_000_000n)]);
     expect(result).toMatchObject({ ok: false, outcome: 'failed', tx: null });
     expect(result.error).toMatch(/expired without landing; nothing was paid$/);
   });
 
-  it('keeps waiting while the blockhash is still valid, rebroadcasting now and then', async () => {
-    world.answers.status = inTurn([null, null, null, null, CONFIRMED]);
+  it('keeps waiting while the blockhash is still valid, and gets the transaction through by sending it again', async () => {
+    let sends = 0;
+    world.answers.drops = () => ++sends === 1;
     world.answers.blockHeight = () => 999;
     const result = await pay([line(0, 1_000_000n)]);
     expect(result.ok).toBe(true);

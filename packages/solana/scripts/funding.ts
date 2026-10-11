@@ -12,12 +12,13 @@ import type { SolanaRpc } from '../src/connection';
 import { submit } from './chain';
 
 /**
- * One proof costs the owner the rent of a mint and a token account and the
- * delegate the rent of three payee token accounts, a few thousandths of a
- * SOL each at most; fees are a rounding error next to rent. This covers a
- * few runs.
+ * One proof costs the owner the rent of a mint and a token account and what
+ * it sends to a marker's address, and the delegate the rent of three payee
+ * token accounts and two run markers: about 0.003 and 0.0055 SOL on devnet.
+ * Fees are a rounding error next to rent. This covers a run with room to
+ * spare.
  */
-export const MIN_BALANCE = 20_000_000n;
+export const MIN_BALANCE = 10_000_000n;
 /** Kept small: a faucet that is nearly dry still serves small requests. */
 const AIRDROP = 100_000_000n;
 const AIRDROP_SOL = '0.1';

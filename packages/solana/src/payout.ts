@@ -15,6 +15,7 @@ import {
   getTransferCheckedInstruction,
 } from '@solana-program/token';
 import { TRANSACTION_SIZE_LIMIT, type PayoutShape } from './capacity';
+import { markerInstructions, type RunMarker } from './marker';
 
 export interface PayoutTransfer {
   /** The payee's wallet. */
@@ -36,6 +37,10 @@ export interface PayoutPlan {
   mint: Address;
   decimals: number;
   runId: string;
+  /** The account whose allocation makes this run payable once; see marker.ts. */
+  marker: RunMarker;
+  /** Lamports the delegate sends to the marker so that it ends up rent exempt. */
+  markerLamports: bigint;
   transfers: readonly PayoutTransfer[];
   /** Carry each line's memo, or only the run memo when they do not fit. */
   lineMemos: boolean;
@@ -51,7 +56,7 @@ export interface PayoutPlan {
  */
 export const PAYOUT_MEMO_PROGRAM_ADDRESS = LEGACY_MEMO_PROGRAM_ADDRESS_V3;
 
-function memoInstruction(memo: string): Instruction {
+export function memoInstruction(memo: string): Instruction {
   return getAddMemoInstruction({ memo }, { programAddress: PAYOUT_MEMO_PROGRAM_ADDRESS });
 }
 
@@ -59,17 +64,23 @@ function memoInstruction(memo: string): Instruction {
  * Instructions of a payout run, in the order they go on chain:
  *
  *   1. Memo: the run id
- *   2. for each line, in the order given:
+ *   2. Transfer: lamports from the delegate to the run marker
+ *   3. AllocateWithSeed: sets the run marker, and fails if the run was paid before
+ *   4. for each line, in the order given:
  *        CreateAssociatedTokenIdempotent   only if the payee has no token account yet
  *        TransferChecked                   source to payee, authority = the delegate
  *        Memo: the line's memo             only if line memos are carried
  *
  * The run memo leads so that it is the first entry of the memo string RPC
- * nodes index per transaction. A line memo directly follows its transfer,
- * which is how the two are paired again when a run is read back.
+ * nodes index per transaction. The marker comes before any transfer, so a
+ * repeat of a paid run stops there. A line memo directly follows its
+ * transfer, which is how the two are paired again when a run is read back.
  */
 export function payoutInstructions(plan: PayoutPlan): Instruction[] {
-  const instructions: Instruction[] = [memoInstruction(plan.runId)];
+  const instructions: Instruction[] = [
+    memoInstruction(plan.runId),
+    ...markerInstructions(plan.delegate, plan.marker, plan.markerLamports),
+  ];
   for (const transfer of plan.transfers) {
     if (transfer.createTokenAccount) {
       instructions.push(

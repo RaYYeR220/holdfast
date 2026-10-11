@@ -1,8 +1,20 @@
 import type { PayoutLine } from '@holdfast/core';
-import { beforeEach, describe, expect, it } from 'vitest';
-import { lamportsShort, payoutCost } from '../src/cost';
+import { SYSTEM_PROGRAM_ADDRESS } from '@solana-program/system';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { lamportsShort, payoutCost, totalLamports } from '../src/cost';
 import { createSolanaPayoutRail } from '../src/rail';
-import { createWorld, DELEGATE_SEED, MINT, OWNER, payee, TOKEN_ACCOUNT_RENT, WALLET_RENT, type World } from './world';
+import { accountInfo } from './fake-node';
+import {
+  createWorld,
+  DELEGATE_SEED,
+  MARKER_RENT,
+  MINT,
+  OWNER,
+  payee,
+  TOKEN_ACCOUNT_RENT,
+  WALLET_RENT,
+  type World,
+} from './world';
 
 const RUN_ID = 'HF-2026-10-0001';
 const FEE = 5_000;
@@ -11,6 +23,7 @@ const lines = (count: number): PayoutLine[] => Array.from({ length: count }, (_,
 const costOf = (newTokenAccounts: number) => ({
   newTokenAccounts,
   rentLamports: BigInt(newTokenAccounts * TOKEN_ACCOUNT_RENT),
+  markerLamports: BigInt(MARKER_RENT),
   feeLamports: BigInt(FEE),
 });
 
@@ -40,6 +53,7 @@ describe('the limit on token accounts a run may create', () => {
       replayed: false,
       lineMemos: false,
       cost: costOf(4),
+      historyError: null,
     });
     expect(world.sent).toEqual([]);
   });
@@ -72,16 +86,40 @@ describe('the limit on token accounts a run may create', () => {
   });
 });
 
-describe('the SOL of the service key', () => {
-  const needed = (newTokenAccounts: number): number => newTokenAccounts * TOKEN_ACCOUNT_RENT + FEE + WALLET_RENT;
+describe('what one run can take from the service key', () => {
+  it('includes the rent of its run marker, which a run that creates no token account pays as well', async () => {
+    await world.openTokenAccount(payee(0));
+    const result = await pay(lines(1));
+    expect(result.cost).toEqual({ newTokenAccounts: 0, rentLamports: 0n, markerLamports: 897_840n, feeLamports: 5_000n });
+  });
 
-  it('must cover the rent and the fee of a run while the key keeps its own rent-exempt minimum', async () => {
+  it('is at most the limit in token account rents, one marker rent and one fee', async () => {
+    const { cost } = await pay(lines(3));
+    if (!cost) throw new Error('a paid run has a cost');
+    expect(totalLamports(cost)).toBe(BigInt(3 * TOKEN_ACCOUNT_RENT + MARKER_RENT + FEE));
+    expect(totalLamports(cost)).toBe(7_020_680n);
+  });
+
+  it('is only the marker rent and the fee when the limit is zero', async () => {
+    await setUp({ maxNewTokenAccountsPerRun: 0 });
+    await world.openTokenAccount(payee(0));
+    const { cost } = await pay(lines(1));
+    if (!cost) throw new Error('a paid run has a cost');
+    expect(totalLamports(cost)).toBe(902_840n);
+  });
+});
+
+describe('the SOL of the service key', () => {
+  const needed = (newTokenAccounts: number): number =>
+    newTokenAccounts * TOKEN_ACCOUNT_RENT + MARKER_RENT + FEE + WALLET_RENT;
+
+  it('must cover the rent, the marker and the fee of a run while the key keeps its own rent-exempt minimum', async () => {
     world.answers.balance = () => needed(2) - 1;
     const result = await pay(lines(2));
     expect(result).toMatchObject({ ok: false, outcome: 'refused', tx: null, cost: costOf(2) });
     expect(result.error).toBe(
-      `the service key ${world.delegate.address} is 1 lamports short: the run needs 4078560 for rent and 5000 ` +
-        `for the fee on top of the 890880 the key must keep, and it holds ${needed(2) - 1}`,
+      `the service key ${world.delegate.address} is 1 lamports short: the run needs 4078560 for token account rent, ` +
+        `897840 for its run marker and 5000 for the fee on top of the 890880 the key must keep, and it holds ${needed(2) - 1}`,
     );
     expect(world.sent).toEqual([]);
   });
@@ -94,7 +132,7 @@ describe('the SOL of the service key', () => {
   it('is checked for a run that creates nothing as well', async () => {
     await world.openTokenAccount(payee(0));
     world.answers.balance = () => 0;
-    expect((await pay(lines(1))).error).toMatch(/is 895880 lamports short/);
+    expect((await pay(lines(1))).error).toMatch(/is 1793720 lamports short/);
     expect(world.sent).toEqual([]);
   });
 
@@ -105,26 +143,66 @@ describe('the SOL of the service key', () => {
   });
 });
 
+describe('the rent rates of the cluster', () => {
+  const asked = (): number =>
+    world.node.methods().filter(method => method === 'getMinimumBalanceForRentExemption').length;
+  const payRun = (runId: string) => world.rail.pay({ account: OWNER, lines: lines(1), runId });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('are read once for runs that follow one another closely: a token account, a marker, an empty account', async () => {
+    await payRun('HF-2026-10-0001');
+    await payRun('HF-2026-10-0002');
+    expect(asked()).toBe(3);
+  });
+
+  it('are read again after ten minutes, so that a marker is funded at the rate in force', async () => {
+    const started = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(started);
+    await payRun('HF-2026-10-0001');
+    clock.mockReturnValue(started + 600_000);
+    await payRun('HF-2026-10-0002');
+    expect(asked()).toBe(3);
+
+    clock.mockReturnValue(started + 600_001);
+    expect(await payRun('HF-2026-10-0003')).toMatchObject({ ok: true, outcome: 'paid' });
+    expect(asked()).toBe(6);
+  });
+
+  it('are asked for again after a read that failed', async () => {
+    world.node.unreachable.add('getMinimumBalanceForRentExemption');
+    expect(await payRun('HF-2026-10-0001')).toMatchObject({ outcome: 'refused', error: 'connect ECONNREFUSED' });
+    expect(world.sent).toEqual([]);
+
+    world.node.unreachable.clear();
+    expect(await payRun('HF-2026-10-0001')).toMatchObject({ ok: true, outcome: 'paid' });
+  });
+});
+
 describe('preview', () => {
+  const unpaid = { alreadyPaid: false, paidBy: null, historyError: null };
+
   it('reports what a run would cost without sending it', async () => {
     await world.openTokenAccount(payee(0));
     expect(await preview([line(0, 1_000n, 'INV-1'), line(1), line(2)])).toEqual({
+      ...unpaid,
       ok: true,
       error: null,
-      paidBy: null,
       lineMemos: true,
       cost: costOf(2),
     });
     expect(world.sent).toEqual([]);
+    expect(await world.isMarked(RUN_ID)).toBe(false);
   });
 
   it('reports the refusal pay would give, with the cost where it is known', async () => {
     expect(await preview(lines(4))).toMatchObject({ ok: false, cost: costOf(4) });
     expect((await preview(lines(4))).error).toMatch(/^run would create 4 payee token accounts/);
     expect(await preview([line(0, 10_000_001n)])).toEqual({
+      ...unpaid,
       ok: false,
       error: 'exceeds delegated allowance: run needs 10.000001, 10 remaining',
-      paidBy: null,
       lineMemos: false,
       cost: null,
     });
@@ -134,28 +212,56 @@ describe('preview', () => {
   it('points at the transaction that already paid the run', async () => {
     const run = [line(0, 1_000n, 'INV-1')];
     const paid = await pay(run);
-    await world.land(world.sent[0]?.wire ?? '', run);
-    expect(await preview(run)).toEqual({ ok: true, error: null, paidBy: paid.tx, lineMemos: true, cost: costOf(1) });
-    expect(await world.restart().preview({ account: OWNER, lines: run, runId: RUN_ID })).toEqual({
-      ok: true,
-      error: null,
-      paidBy: paid.tx,
-      lineMemos: true,
-      cost: null,
-    });
+    const already = { ok: true, error: null, alreadyPaid: true, paidBy: paid.tx, lineMemos: true, historyError: null };
+    expect(await preview(run)).toEqual({ ...already, cost: costOf(1) });
+    expect(await world.restart().preview({ account: OWNER, lines: run, runId: RUN_ID })).toEqual({ ...already, cost: null });
     expect(await preview([line(0, 2_000n, 'INV-1')])).toMatchObject({
       ok: false,
+      alreadyPaid: true,
       paidBy: paid.tx,
       error: `run ${RUN_ID} was already paid by ${paid.tx} with different lines`,
     });
   });
 
-  it('reports an unreachable node instead of throwing', async () => {
+  it('says a run is paid on the word of its marker when the payment cannot be read', async () => {
+    const run = lines(1);
+    await pay(run);
+    world.node.unreachable.add('getSignaturesForAddress');
+    expect(await world.restart().preview({ account: OWNER, lines: run, runId: RUN_ID })).toEqual({
+      ok: true,
+      error: null,
+      alreadyPaid: true,
+      paidBy: null,
+      lineMemos: false,
+      cost: null,
+      historyError: `run ${RUN_ID} is marked paid on chain, but its payment could not be read: connect ECONNREFUSED`,
+    });
+  });
+
+  it('goes ahead when the history cannot be read, and says that it was not', async () => {
     world.node.unreachable.add('getSignaturesForAddress');
     expect(await preview(lines(1))).toEqual({
-      ok: false,
-      error: `could not rule out that run ${RUN_ID} was already paid: connect ECONNREFUSED`,
+      ok: true,
+      error: null,
+      alreadyPaid: false,
       paidBy: null,
+      lineMemos: false,
+      cost: costOf(1),
+      historyError: 'connect ECONNREFUSED',
+    });
+  });
+
+  it('charges only what the marker address still lacks when somebody has sent lamports there', async () => {
+    world.accounts.set(await world.markerOf(RUN_ID), accountInfo(SYSTEM_PROGRAM_ADDRESS, [], WALLET_RENT));
+    expect((await preview(lines(1))).cost?.markerLamports).toBe(BigInt(MARKER_RENT - WALLET_RENT));
+  });
+
+  it('reports an unreachable node instead of throwing', async () => {
+    world.node.unreachable.add('getMultipleAccounts');
+    expect(await preview(lines(1))).toEqual({
+      ...unpaid,
+      ok: false,
+      error: 'connect ECONNREFUSED',
       lineMemos: false,
       cost: null,
     });
@@ -163,17 +269,27 @@ describe('preview', () => {
 });
 
 describe('payoutCost and lamportsShort', () => {
-  const rates = { tokenAccount: 2_039_280n, wallet: 890_880n };
+  const rates = { tokenAccount: 2_039_280n, marker: 897_840n, wallet: 890_880n };
 
-  it('charges rent per new token account and one signature fee', () => {
-    expect(payoutCost(0, rates)).toEqual({ newTokenAccounts: 0, rentLamports: 0n, feeLamports: 5_000n });
-    expect(payoutCost(3, rates)).toEqual({ newTokenAccounts: 3, rentLamports: 6_117_840n, feeLamports: 5_000n });
+  it('charges rent per new token account, what the marker takes, and one signature fee', () => {
+    expect(payoutCost(0, 897_840n, rates)).toEqual({
+      newTokenAccounts: 0,
+      rentLamports: 0n,
+      markerLamports: 897_840n,
+      feeLamports: 5_000n,
+    });
+    expect(payoutCost(3, 1n, rates)).toEqual({
+      newTokenAccounts: 3,
+      rentLamports: 6_117_840n,
+      markerLamports: 1n,
+      feeLamports: 5_000n,
+    });
   });
 
-  it('measures the shortfall against rent, fee and the minimum the key keeps', () => {
-    const cost = payoutCost(1, rates);
-    expect(lamportsShort(2_935_160n, cost, rates)).toBe(0n);
-    expect(lamportsShort(2_935_159n, cost, rates)).toBe(1n);
-    expect(lamportsShort(0n, cost, rates)).toBe(2_935_160n);
+  it('measures the shortfall against rent, marker, fee and the minimum the key keeps', () => {
+    const cost = payoutCost(1, 897_840n, rates);
+    expect(lamportsShort(3_833_000n, cost, rates)).toBe(0n);
+    expect(lamportsShort(3_832_999n, cost, rates)).toBe(1n);
+    expect(lamportsShort(0n, cost, rates)).toBe(3_833_000n);
   });
 });

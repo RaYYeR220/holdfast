@@ -2,7 +2,7 @@
  * Longest memo the rail will put on chain. At 64 bytes a memo and its three
  * bytes of instruction framing cost at most 67 bytes of the 1232 a
  * transaction has, so a run whose every memo is at the cap still carries
- * five payees that each need a new token account.
+ * four payees that each need a new token account.
  */
 export const MAX_MEMO_LENGTH = 64;
 

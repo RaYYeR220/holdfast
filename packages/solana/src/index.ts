@@ -23,9 +23,17 @@ export {
 export type { RpcSource, SettledCommitment } from './connection';
 export type { SolanaPayoutRailConfig } from './context';
 export type { PayoutCost } from './cost';
+export { runMarker, runMarkerSeed, type RunMarker } from './marker';
 export { MAX_MEMO_LENGTH, parseSignatureMemos, validateMemo } from './memo';
 export { createSolanaPayoutRail, type SolanaPayoutRail } from './rail';
 export type { PayoutRun, RunTransfer } from './reconcile';
 export type { RunInput } from './prepare';
-export type { AllowanceProbe, PayoutOutcome, PayoutPreview, SolanaPayoutResult } from './results';
+export type {
+  AllowanceProbe,
+  PayoutOutcome,
+  PayoutPreview,
+  RefusalProbe,
+  RepeatRunProbe,
+  SolanaPayoutResult,
+} from './results';
 export { UnprovenAbsence } from './search';

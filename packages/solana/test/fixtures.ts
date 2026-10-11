@@ -1,4 +1,5 @@
 import { createNoopSigner, type Address, type TransactionSigner } from '@solana/kit';
+import type { RunMarker } from '../src/marker';
 import type { PayoutPlan } from '../src/payout';
 import { addressOf } from './fake-node';
 
@@ -6,6 +7,9 @@ export const RUN_ID = 'HF-2026-10-0001';
 export const DELEGATE: Address = addressOf(1);
 export const SOURCE: Address = addressOf(2);
 export const MINT: Address = addressOf(3);
+/** A marker for tests that only look at the shape of a transaction; its address is not derived from its seed. */
+export const MARKER: RunMarker = { address: addressOf(4), seed: 's'.repeat(32) };
+export const MARKER_LAMPORTS = 897_840n;
 
 export interface PlanLine {
   memo?: string;
@@ -24,6 +28,8 @@ export function planOf(
     mint: MINT,
     decimals: 6,
     runId: options.runId ?? RUN_ID,
+    marker: MARKER,
+    markerLamports: MARKER_LAMPORTS,
     lineMemos: options.lineMemos ?? true,
     transfers: lines.map((line, index) => ({
       payee: payeeOf(index),

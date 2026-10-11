@@ -5,6 +5,7 @@ import {
   type Instruction,
   type TransactionError,
 } from '@solana/kit';
+import { SYSTEM_PROGRAM_ADDRESS } from '@solana-program/system';
 import { TOKEN_PROGRAM_ADDRESS } from '@solana-program/token';
 
 /** `TokenError` variants of the Token program, indexed by their custom error code. */
@@ -31,14 +32,53 @@ const TOKEN_ERRORS = [
   'NonNativeNotSupported',
 ] as const;
 
-function describeCustomError(index: number, code: number, instructions: readonly Instruction[]): string {
-  const base = `instruction ${index} failed: custom program error 0x${code.toString(16)}`;
-  const name = instructions[index]?.programAddress === TOKEN_PROGRAM_ADDRESS ? TOKEN_ERRORS[code] : undefined;
-  return name ? `${base} (Token program: ${name})` : base;
+/** `SystemError` variants of the System program, indexed by their custom error code. */
+const SYSTEM_ERRORS = [
+  'AccountAlreadyInUse',
+  'ResultWithNegativeLamports',
+  'InvalidProgramId',
+  'InvalidAccountDataLength',
+  'MaxSeedLengthExceeded',
+  'AddressWithSeedMismatch',
+  'NonceNoRecentBlockhashes',
+  'NonceBlockhashNotExpired',
+  'NonceUnexpectedBlockhashValue',
+] as const;
+
+/** A program's own error code, and the instruction of the transaction that returned it. */
+export interface CustomError {
+  index: number;
+  code: number;
 }
 
+function describeCustomError({ index, code }: CustomError, instructions: readonly Instruction[]): string {
+  const base = `instruction ${index} failed: custom program error 0x${code.toString(16)}`;
+  const program = instructions[index]?.programAddress;
+  if (program === TOKEN_PROGRAM_ADDRESS && TOKEN_ERRORS[code]) return `${base} (Token program: ${TOKEN_ERRORS[code]})`;
+  if (program === SYSTEM_PROGRAM_ADDRESS && SYSTEM_ERRORS[code]) {
+    return `${base} (System program: ${SYSTEM_ERRORS[code]})`;
+  }
+  return base;
+}
+
+/** The custom program error a processed transaction failed with, if that is how it failed. */
+export function customErrorOf(err: TransactionError | null): CustomError | null {
+  if (err === null || typeof err === 'string' || !('InstructionError' in err)) return null;
+  const [index, detail] = err.InstructionError;
+  return typeof detail === 'string' ? null : { index: Number(index), code: Number(detail.Custom) };
+}
+
+/** The custom program error a preflight simulation failed with, if that is why a send was refused. */
+export function simulatedCustomError(error: unknown): CustomError | null {
+  if (!isSolanaError(error, SOLANA_ERROR__JSON_RPC__SERVER_ERROR_SEND_TRANSACTION_PREFLIGHT_FAILURE)) return null;
+  const cause: unknown = error.cause;
+  if (!isSolanaError(cause, SOLANA_ERROR__INSTRUCTION_ERROR__CUSTOM)) return null;
+  return { index: Number(cause.context.index), code: Number(cause.context.code) };
+}
+
+/** Kit hands over the integers in an error as bigints; they are indices and codes, small enough to print as numbers. */
 function stringify(value: unknown): string {
-  return JSON.stringify(value, (_key, v: unknown) => (typeof v === 'bigint' ? v.toString() : v));
+  return JSON.stringify(value, (_key, v: unknown) => (typeof v === 'bigint' ? Number(v) : v));
 }
 
 /**
@@ -50,7 +90,7 @@ export function describeTransactionError(err: TransactionError, instructions: re
   if ('InstructionError' in err) {
     const [index, detail] = err.InstructionError;
     if (typeof detail === 'string') return `instruction ${Number(index)} failed: ${detail}`;
-    return describeCustomError(Number(index), Number(detail.Custom), instructions);
+    return describeCustomError({ index: Number(index), code: Number(detail.Custom) }, instructions);
   }
   return stringify(err);
 }
@@ -58,11 +98,9 @@ export function describeTransactionError(err: TransactionError, instructions: re
 /** Render whatever a failed RPC call threw, unwrapping a failed preflight simulation. */
 export function describeFailure(error: unknown, instructions: readonly Instruction[] = []): string {
   if (isSolanaError(error, SOLANA_ERROR__JSON_RPC__SERVER_ERROR_SEND_TRANSACTION_PREFLIGHT_FAILURE)) {
+    const custom = simulatedCustomError(error);
+    if (custom) return `simulation failed: ${describeCustomError(custom, instructions)}`;
     const cause: unknown = error.cause;
-    if (isSolanaError(cause, SOLANA_ERROR__INSTRUCTION_ERROR__CUSTOM)) {
-      const { index, code } = cause.context;
-      return `simulation failed: ${describeCustomError(Number(index), Number(code), instructions)}`;
-    }
     return `simulation failed: ${cause instanceof Error ? cause.message : error.message}`;
   }
   return error instanceof Error ? error.message : String(error);

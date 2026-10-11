@@ -8,7 +8,7 @@ import {
 } from '@solana/kit';
 import { AccountState, getTokenEncoder, TOKEN_PROGRAM_ADDRESS } from '@solana-program/token';
 
-type Handler = (params: readonly unknown[]) => unknown;
+type Handler = (params: readonly unknown[]) => unknown | Promise<unknown>;
 
 /** Thrown by a handler to make the fake node answer with a JSON-RPC error. */
 export class NodeError extends Error {
@@ -44,7 +44,7 @@ export function fakeNode(handlers: Record<string, Handler>): FakeNode {
     const handler = handlers[method];
     if (!handler) throw new Error(`the fake node has no handler for ${method}`);
     try {
-      return { jsonrpc: '2.0', id, result: handler(params) };
+      return { jsonrpc: '2.0', id, result: await handler(params) };
     } catch (error) {
       if (!(error instanceof NodeError)) throw error;
       return { jsonrpc: '2.0', id, error: { code: error.code, message: error.message, data: error.data } };
@@ -84,12 +84,16 @@ export function tokenAccountInfo(fields: TokenAccountFields) {
   return accountInfo(TOKEN_PROGRAM_ADDRESS, data);
 }
 
-export function accountInfo(owner: Address, data: Uint8Array | ArrayLike<number> = new Uint8Array()) {
+export function accountInfo(
+  owner: Address,
+  data: Uint8Array | ArrayLike<number> = new Uint8Array(),
+  lamports = 2_039_280,
+) {
   const bytes = Uint8Array.from(data);
   return {
     data: [getBase64Decoder().decode(bytes), 'base64'],
     executable: false,
-    lamports: 2_039_280,
+    lamports,
     owner,
     rentEpoch: 0,
     space: bytes.length,

@@ -3,9 +3,15 @@ import { associatedTokenAddress, delegatedAllowance, fetchTokenAccount } from '.
 import { createRailContext, type SolanaPayoutRailConfig } from './context';
 import { describeFailure } from './errors';
 import type { RunInput } from './prepare';
-import { probeOverAllowance } from './probe';
+import { probeOverAllowance, probeRepeatRun } from './probe';
 import type { PayoutRun } from './reconcile';
-import { refused, type AllowanceProbe, type PayoutPreview, type SolanaPayoutResult } from './results';
+import {
+  refused,
+  type AllowanceProbe,
+  type PayoutPreview,
+  type RepeatRunProbe,
+  type SolanaPayoutResult,
+} from './results';
 import { createRunPayer } from './runs';
 import { UnprovenAbsence } from './search';
 
@@ -14,16 +20,20 @@ export interface SolanaPayoutRail extends PayoutRail {
   /** Address of the service key: what the team approves as delegate. */
   delegate(): Promise<string>;
   /**
-   * Pay a run once. A run id that has been paid with the same lines is
-   * answered with the transaction that paid it; with different lines it is
-   * refused. Read `outcome`, not only `ok`: an `unknown` run may yet be paid.
-   * Never throws.
+   * Pay a run, once. The payout sets a run marker on chain in the same
+   * transaction, and the chain refuses to set one twice, so a second payout
+   * of the same run id cannot go through, from this rail or any other with
+   * the same service key. A run that is already paid is answered with the
+   * transaction that paid it, or refused if it was paid with other lines.
+   * Read `outcome`, not only `ok`: an `unknown` run may yet be paid. Never
+   * throws.
    */
   pay(i: RunInput): Promise<SolanaPayoutResult>;
   /**
    * Everything pay() checks before it sends, without sending: whether the
-   * run would go ahead, and what it would cost the service key in rent for
-   * new payee token accounts and in fees. Never throws.
+   * run is already paid, whether it would go ahead, and what it would cost
+   * the service key in rent for new payee token accounts, in rent for its
+   * run marker, and in fees. Never throws.
    */
   preview(i: RunInput): Promise<PayoutPreview>;
   /**
@@ -47,6 +57,12 @@ export interface SolanaPayoutRail extends PayoutRail {
    * must already hold a token account: the probe never creates one.
    */
   probeOverAllowance(i: { account: string; to: string }): Promise<AllowanceProbe>;
+  /**
+   * Send a second payout of a run that is already paid, past preflight, and
+   * report that the chain refused it. It sends nothing unless the run marker
+   * is set, and with the marker set the transaction cannot succeed.
+   */
+  probeRepeatRun(i: RunInput): Promise<RepeatRunProbe>;
 }
 
 export function createSolanaPayoutRail(config: SolanaPayoutRailConfig): SolanaPayoutRail {
@@ -78,8 +94,9 @@ export function createSolanaPayoutRail(config: SolanaPayoutRailConfig): SolanaPa
     async preview(i): Promise<PayoutPreview> {
       try {
         return await runs.preview(i);
-      } catch (error) {
-        return { ok: false, error: describeFailure(error), paidBy: null, lineMemos: false, cost: null };
+      } catch (caught) {
+        const error = describeFailure(caught);
+        return { ok: false, error, alreadyPaid: false, paidBy: null, lineMemos: false, cost: null, historyError: null };
       }
     },
 
@@ -101,6 +118,14 @@ export function createSolanaPayoutRail(config: SolanaPayoutRailConfig): SolanaPa
     async probeOverAllowance(i): Promise<AllowanceProbe> {
       try {
         return await probeOverAllowance(context, i);
+      } catch (error) {
+        return { signature: null, failedOnChain: false, error: describeFailure(error) };
+      }
+    },
+
+    async probeRepeatRun(i): Promise<RepeatRunProbe> {
+      try {
+        return await probeRepeatRun(context, i);
       } catch (error) {
         return { signature: null, failedOnChain: false, error: describeFailure(error) };
       }

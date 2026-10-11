@@ -33,6 +33,8 @@ export interface RunSearch {
   notBefore?: bigint;
   /** Transactions earlier searches have read, keyed by {@link knownKey}. */
   known?: Map<string, KnownTransaction>;
+  /** How many transactions the search may fetch before it gives up proving anything. Defaults to 50. */
+  maxInspections?: number;
 }
 
 export interface FoundRun {
@@ -50,8 +52,7 @@ export class UnprovenAbsence extends Error {}
 
 const SIGNATURE_PAGE = 1_000;
 const MAX_SIGNATURE_PAGES = 10;
-/** Transactions one search will fetch before it gives up proving anything. */
-const MAX_INSPECTIONS = 50;
+const DEFAULT_MAX_INSPECTIONS = 50;
 /** `getSignaturesForAddress` serves nothing below this, so a payment can only be looked for here. */
 const HISTORY_COMMITMENT = 'confirmed';
 
@@ -190,11 +191,12 @@ async function isFinalized(rpc: SolanaRpc, signature: Signature): Promise<boolea
 export async function searchRun(rpc: SolanaRpc, run: RunIdentity, search: RunSearch): Promise<FoundRun | null> {
   const { notBefore, known } = search;
   const { source, runId } = run;
+  const maxInspections = search.maxInspections ?? DEFAULT_MAX_INSPECTIONS;
   let inspections = 0;
   const read = async (signature: Signature): Promise<Inspection> => {
-    if (++inspections > MAX_INSPECTIONS) {
+    if (++inspections > maxInspections) {
       throw new UnprovenAbsence(
-        `more than ${MAX_INSPECTIONS} transactions of ${source} would have to be read to rule run ${runId} out; ` +
+        `more than ${maxInspections} transactions of ${source} would have to be read to rule run ${runId} out; ` +
           'pass notBefore to bound the search',
       );
     }
