@@ -14,12 +14,14 @@ import {
   serializePublishedStatement,
   stringifyExact,
 } from '../src/index';
-import { BIRTHDAY, HL_ACCOUNT, NOW, ORG, POLICY, SOLANA_USDC_MINT, SPEND_HEIGHT, TEMPO_PATH_USD, historyWithPayouts, realHistory } from './fixtures';
+import { BIRTHDAY, HL_ACCOUNT, NOW, ORG, PAYOUTS_NOW, POLICY, SOLANA_USDC_MINT, SPEND_HEIGHT, TEMPO_PATH_USD, historyWithPayouts, realHistory } from './fixtures';
+
+const TREASURY_ADDRESS = 'u1demotreasuryaddress0qxyz';
 
 const org: PublishedOrg = {
   id: ORG,
   name: 'Holdfast demo treasury',
-  zcash: { network: 'mainnet', birthday: BIRTHDAY, scannedTo: SPEND_HEIGHT + 117 },
+  zcash: { network: 'mainnet', address: TREASURY_ADDRESS, birthday: BIRTHDAY, scannedTo: SPEND_HEIGHT + 117 },
   hyperliquid: { account: HL_ACCOUNT, since: Date.parse('2026-10-01T00:00:00Z'), through: NOW },
   payoutAccounts: [
     { chain: 'tempo', account: '0x52908400098527886E0F7030069857D2E4169EE7', token: TEMPO_PATH_USD },
@@ -35,7 +37,7 @@ function publish(history = historyWithPayouts()) {
     journal: history.journal,
     swaps: history.records.swaps,
     payouts: history.payouts,
-    now: NOW,
+    now: PAYOUTS_NOW,
     monthlyBurnUsd: 4,
   });
 }
@@ -63,14 +65,14 @@ describe('a published statement', () => {
     const ledger = buildLedger(history.records);
     const published = publish(history);
     expect(published.version).toBe(PUBLISHED_STATEMENT_VERSION);
-    expect(published.generatedAt).toBe(NOW);
+    expect(published.generatedAt).toBe(PAYOUTS_NOW);
     expect(published.org).toEqual(org);
     expect(published.policy).toEqual(POLICY);
     expect(published.ledger).toEqual(ledger);
     expect(published.journal).toEqual(history.journal);
     expect(published.swaps).toEqual(history.records.swaps);
     expect(published.payouts).toEqual(history.payouts);
-    expect(published.statement).toEqual(buildStatement({ ledger, journal: history.journal, policy: POLICY, now: NOW, monthlyBurnUsd: 4 }));
+    expect(published.statement).toEqual(buildStatement({ ledger, journal: history.journal, policy: POLICY, now: PAYOUTS_NOW, monthlyBurnUsd: 4 }));
   });
 
   it('passes on the options the statement was built with', () => {
@@ -85,10 +87,9 @@ describe('a published statement', () => {
       now: NOW,
       monthlyBurnUsd: null,
       range: { from: 0, to: NOW },
-      staleAfterMs: 600_000,
       seriesStep: 'entry',
     });
-    expect(published.statement).toMatchObject({ range: { from: 0, to: NOW }, staleAfterMs: 600_000, seriesStep: 'entry', monthlyBurnUsd: null });
+    expect(published.statement).toMatchObject({ range: { from: 0, to: NOW }, staleAfterMs: POLICY.maxDataAgeMs, seriesStep: 'entry', monthlyBurnUsd: null });
     expect(published.statement.series).toHaveLength(5);
   });
 
@@ -112,7 +113,7 @@ describe('a published statement', () => {
       })),
       ledger: buildLedger(history.records).map((entry) => ({ ...entry, internal: 'scratch' })),
     };
-    const published = buildPublishedStatement({ ...rows, policy: POLICY, journal: history.journal, now: NOW, monthlyBurnUsd: 4 });
+    const published = buildPublishedStatement({ ...rows, policy: POLICY, journal: history.journal, now: PAYOUTS_NOW, monthlyBurnUsd: 4 });
     const text = serializePublishedStatement(published);
     for (const leak of ['uview1', '0xprivate', 'quote-signature', '0xsigned-transaction', 'internal note', 'reconciled', 'scratch']) {
       expect(text).not.toContain(leak);

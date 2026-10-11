@@ -11,9 +11,12 @@ export const USAGE = `Usage:
   holdfast verify <statement.json> [--ufvk <key> | --ufvk-file <path>] [--offline] [--json]
       Derive a published statement again instead of trusting it: the journal chain,
       the Zcash history (needs the viewing key), the Hyperliquid history, the
-      reconciliation and the arithmetic. Exits 1 if a step fails.
-        --offline                 make no network request; the two chain steps are skipped
-        --zcash-endpoint <url>    lightwalletd endpoint to scan through; may be repeated
+      reconciliation and the arithmetic. Exits 0 only when every step ran and
+      passed; a step that failed or was not run exits 1.
+        --offline                        make no network request; the two chain steps are not run
+        --birthday <height>              scan Zcash from this block, not the one the statement gives
+        --hyperliquid-account <address>  the account the statement is expected to be about
+        --zcash-endpoint <url>           lightwalletd endpoint to scan through; may be repeated
 
   --json prints the result for a program to read.`;
 

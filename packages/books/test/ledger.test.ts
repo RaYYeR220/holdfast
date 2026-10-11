@@ -349,8 +349,15 @@ describe('payouts', () => {
   });
 
   it('keeps a token it does not know in raw units and without a dollar value', () => {
-    const [line] = buildLedger({ payoutRuns: [tempoRun] });
-    expect(line).toMatchObject({ asset: tempoRun.token, decimals: 0, amount: -450_000_000n, usd: null });
+    const token = '0x1111111111111111111111111111111111111111';
+    const [line] = buildLedger({ payoutRuns: [{ ...tempoRun, token }] });
+    expect(line).toMatchObject({ asset: token, decimals: 0, amount: -450_000_000n, usd: null });
+  });
+
+  it('knows the mainnet stablecoins payouts are made in, whatever case their address is written in', () => {
+    const [line] = buildLedger({ payoutRuns: [{ ...tempoRun, token: '0x20C000000000000000000000B9537D11C60E8B50' }] });
+    expect(line).toMatchObject({ asset: 'USDC.e', decimals: 6, usd: -450, usdPrice: 1 });
+    expect(buildLedger({ payoutRuns: [solanaRun] })[0]).toMatchObject({ asset: 'USDC', decimals: 6, usd: -125.5 });
   });
 
   it('keeps the two swaps and their deposits apart', () => {

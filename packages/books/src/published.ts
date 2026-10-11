@@ -1,4 +1,4 @@
-import { DEFAULT_POLICY, type Policy } from '@holdfast/core';
+import { DEFAULT_POLICY, digest, type Policy } from '@holdfast/core';
 import type { JournalEntry } from '@holdfast/engine';
 import { LEDGER_KINDS, LEDGER_SOURCES, type LedgerEntry } from './entry';
 import type { PayoutEvidence } from './evidence';
@@ -16,6 +16,12 @@ export interface PublishedOrg {
   name: string;
   zcash: {
     network: 'mainnet' | 'testnet';
+    /**
+     * The unified address the treasury's viewing key receives on. It is what
+     * ties a viewing key handed to a reader to the treasury this statement
+     * is about, and it is the address payers already know.
+     */
+    address: string;
     /** First block that can hold treasury funds. */
     birthday: number;
     /** Last block the ledger's Zcash entries cover; null before the first scan. */
@@ -59,36 +65,58 @@ export interface PublishInput {
   now: number;
   monthlyBurnUsd: number | null;
   range?: DateRange;
-  staleAfterMs?: number;
   seriesStep?: SeriesStep;
+  /**
+   * Strings that must not leave the organisation: the viewing key, endpoint
+   * URLs that carry a token, API keys. Journal entries are published whole,
+   * error messages included, so the finished export is searched for each of
+   * these and refused if one is found.
+   */
+  secrets?: readonly string[];
 }
+
+/**
+ * The policy the controller is running under, as far as the journal shows:
+ * the given one, or the given one with the hedge ratio at zero, which is what
+ * the controller decides under while the lock is switched off. Null when the
+ * latest entry was decided under neither.
+ */
+export function policyInForce(policy: Policy, journal: readonly JournalEntry[]): Policy | null {
+  const latest = journal.reduce<JournalEntry | undefined>((last, entry) => (last === undefined || entry.seq > last.seq ? entry : last), undefined);
+  if (latest === undefined || latest.policyDigest === digest(policy)) return policy;
+  const lockOff = { ...policy, hedgeRatioBps: 0 };
+  return latest.policyDigest === digest(lockOff) ? lockOff : null;
+}
+
+const VIEWING_KEY = /uview(test)?1[02-9ac-hj-np-z]{20,}/;
 
 /**
  * Assemble the export. The statement is built here, from the same ledger and
  * journal that are published, so the figures cannot drift from what backs
- * them. Records are copied field by field: a database row handed in whole
- * carries more than is meant to be public, and none of the rest goes out.
+ * them, and under the policy the journal shows to be in force, with that
+ * policy's own limit on how old a reading may be. Records are copied field by
+ * field: a database row handed in whole carries more than is meant to be
+ * public, and none of the rest goes out.
  */
 export function buildPublishedStatement(input: PublishInput): PublishedStatement {
   const { org } = input;
   const statement = buildStatement({
     ledger: input.ledger,
     journal: input.journal,
-    policy: input.policy,
+    policy: policyInForce(input.policy, input.journal) ?? input.policy,
     now: input.now,
     monthlyBurnUsd: input.monthlyBurnUsd,
     ...(input.range === undefined ? {} : { range: input.range }),
-    ...(input.staleAfterMs === undefined ? {} : { staleAfterMs: input.staleAfterMs }),
     ...(input.seriesStep === undefined ? {} : { seriesStep: input.seriesStep }),
   });
 
-  return {
+  const published: PublishedStatement = {
     version: PUBLISHED_STATEMENT_VERSION,
     generatedAt: input.now,
     org: {
       id: org.id,
       name: org.name,
-      zcash: { network: org.zcash.network, birthday: org.zcash.birthday, scannedTo: org.zcash.scannedTo },
+      zcash: { network: org.zcash.network, address: org.zcash.address, birthday: org.zcash.birthday, scannedTo: org.zcash.scannedTo },
       hyperliquid: { account: org.hyperliquid.account, since: org.hyperliquid.since, through: org.hyperliquid.through },
       payoutAccounts: org.payoutAccounts.map((a) => ({ chain: a.chain, account: a.account, token: a.token })),
     },
@@ -158,6 +186,12 @@ export function buildPublishedStatement(input: PublishInput): PublishedStatement
     })),
     statement,
   };
+
+  const text = stringifyExact(published);
+  const leaked = (input.secrets ?? []).findIndex((secret) => secret !== '' && text.includes(secret));
+  if (leaked >= 0) throw new Error(`refusing to publish: the export would contain secret number ${leaked + 1} of those it was told to keep`);
+  if (VIEWING_KEY.test(text)) throw new Error('refusing to publish: the export would contain a viewing key');
+  return published;
 }
 
 export function serializePublishedStatement(published: PublishedStatement): string {
@@ -177,7 +211,7 @@ const chain = oneOf(['tempo', 'solana']);
 const orgShape = record({
   id: text,
   name: text,
-  zcash: record({ network: oneOf(['mainnet', 'testnet']), birthday: integer, scannedTo: nullable(integer) }),
+  zcash: record({ network: oneOf(['mainnet', 'testnet']), address: text, birthday: integer, scannedTo: nullable(integer) }),
   hyperliquid: record({ account: text, since: integer, through: integer }),
   payoutAccounts: list(record({ chain, account: text, token: text })),
 });
@@ -309,10 +343,17 @@ export function parsePublishedStatement(json: string): PublishedStatement {
   }
   const version = typeof value === 'object' && value !== null ? (value as { version?: unknown }).version : undefined;
   if (version !== PUBLISHED_STATEMENT_VERSION) {
-    throw new PublishedStatementError([`version ${JSON.stringify(version) ?? 'missing'} is not supported; this reader understands version ${PUBLISHED_STATEMENT_VERSION}`]);
+    const named = typeof version === 'number' || typeof version === 'string' ? JSON.stringify(version) : 'missing';
+    throw new PublishedStatementError([`version ${named} is not supported; this reader understands version ${PUBLISHED_STATEMENT_VERSION}`]);
   }
   const faults: string[] = [];
   publishedShape(value, 'statement file', faults);
   if (faults.length > 0) throw new PublishedStatementError(faults);
-  return value as PublishedStatement;
+
+  const published = value as PublishedStatement;
+  // The file states its moment twice; a reader shown one and a check run on the other would be looking at different statements.
+  if (published.generatedAt !== published.statement.asOf) {
+    throw new PublishedStatementError(['statement file.generatedAt: differs from statement.asOf, the moment the figures are for']);
+  }
+  return published;
 }

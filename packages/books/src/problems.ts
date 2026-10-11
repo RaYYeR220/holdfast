@@ -13,6 +13,7 @@ export const PROBLEM_KINDS = [
   'run_tx_mismatch',
   'run_unsettled',
   'payout_ledger_mismatch',
+  'unknown_token',
   // Swaps against the treasury payments that funded them and what arrived.
   'unfunded_swap',
   'swap_funding_mismatch',
@@ -21,6 +22,7 @@ export const PROBLEM_KINDS = [
   'swap_below_minimum',
   'swap_unsettled',
   'swap_entry_without_swap',
+  'swap_ledger_mismatch',
   // Orders in the journal against fills on the venue.
   'order_without_fill',
   'fill_without_order',
@@ -30,7 +32,9 @@ export const PROBLEM_KINDS = [
   // Balances the journal recorded against the ledger.
   'balance_mismatch',
   'balance_unverifiable',
+  'balance_unrecorded',
   // The records themselves.
+  'malformed_entry',
   'duplicate_record',
   'unreadable',
 ] as const;

@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
-import type { FundingPayment, HedgeFill, PublishedOrg } from '@holdfast/books';
+import type { FundingPayment, HedgeFill } from '@holdfast/books';
 import type { Bar, TreasuryScanner } from '@holdfast/core';
 
 /** The reads `verify` makes on Hyperliquid; none of them needs a key. */
@@ -11,9 +11,18 @@ export interface VenueReader {
   userFunding(user: string, sinceMs: number): Promise<FundingPayment[]>;
 }
 
-/** Everything that reaches the network, so that it can be replaced. */
+/** What a viewing key says about itself, or why it is not one. */
+export type KeyDescription = { ok: true; network: 'mainnet' | 'testnet'; address: string } | { ok: false; error: string };
+
+/**
+ * Everything that reaches outside the process, so that it can be replaced.
+ * `verify` only ever looks at Zcash and Hyperliquid mainnet: which chain a
+ * statement is held against is not something the statement gets to choose.
+ */
 export interface Sources {
-  zcash(network: PublishedOrg['zcash']['network'], endpoints: readonly string[]): Promise<TreasuryScanner>;
+  /** Worked out from the key alone: the network it belongs to and the address it receives on. */
+  describeKey(ufvk: string): Promise<KeyDescription>;
+  zcash(endpoints: readonly string[]): Promise<TreasuryScanner>;
   hyperliquid(): Promise<VenueReader>;
 }
 
@@ -22,6 +31,7 @@ export interface Env {
   out(line: string): void;
   err(line: string): void;
   readFile(path: string): Promise<string>;
+  now(): number;
   /** The hourly ZEC history the scenarios are graded on. */
   loadBars(): Promise<Bar[]>;
   sources: Sources;
@@ -40,11 +50,14 @@ async function bundledBars(): Promise<Bar[]> {
  * have to load that.
  */
 const liveSources: Sources = {
-  async zcash(network, endpoints) {
+  async describeKey(ufvk) {
+    const { checkUfvk } = await import('@holdfast/zcash');
+    const checked = checkUfvk(ufvk, ufvk.startsWith('uviewtest1') ? 'testnet' : 'mainnet');
+    return checked.ok ? { ok: true, network: checked.network, address: checked.address } : { ok: false, error: checked.error };
+  },
+  async zcash(endpoints) {
     const { createTreasuryScanner, MAINNET_ENDPOINTS } = await import('@holdfast/zcash');
-    const known = endpoints.length > 0 ? endpoints : network === 'mainnet' ? MAINNET_ENDPOINTS : [];
-    if (known.length === 0) throw new Error(`no lightwalletd endpoint is known for ${network}; name one with --zcash-endpoint`);
-    return createTreasuryScanner({ network, endpoints: [...known] });
+    return createTreasuryScanner({ network: 'mainnet', endpoints: endpoints.length > 0 ? [...endpoints] : MAINNET_ENDPOINTS });
   },
   async hyperliquid() {
     const { createHedgeVenue } = await import('@holdfast/hyperliquid');
@@ -57,6 +70,7 @@ export function nodeEnv(): Env {
     out: (line) => void process.stdout.write(`${line}\n`),
     err: (line) => void process.stderr.write(`${line}\n`),
     readFile: (path) => readFile(path, 'utf8'),
+    now: Date.now,
     loadBars: bundledBars,
     sources: liveSources,
   };

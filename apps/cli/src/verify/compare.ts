@@ -84,11 +84,15 @@ export interface EntryDiff {
 
 /**
  * Hold the published entries of one source against the same entries rebuilt
- * from that source, line by line. `fields` names what to compare for a given
- * rebuilt entry: a dollar value, for one, can only be compared where the
- * source itself fixes the price.
+ * from that source, line by line. `fields` names what the source fixes about
+ * an entry and so what to compare: a dollar value, for one, can only be
+ * compared where the source itself gives the price.
  */
-export function diffEntries(published: readonly LedgerEntry[], rebuilt: readonly LedgerEntry[], fields: (rebuilt: LedgerEntry) => readonly EntryField[]): EntryDiff {
+export function diffEntries(
+  published: readonly LedgerEntry[],
+  rebuilt: readonly LedgerEntry[],
+  fields: (rebuilt: LedgerEntry, published: LedgerEntry) => readonly EntryField[],
+): EntryDiff {
   const diff: EntryDiff = { matched: 0, missing: [], unexpected: [], changed: [] };
   const expected = new Map(rebuilt.map((entry) => [entry.id, entry]));
 
@@ -101,7 +105,7 @@ export function diffEntries(published: readonly LedgerEntry[], rebuilt: readonly
     }
     expected.delete(entry.id);
     const before = diff.changed.length;
-    for (const field of fields(twin)) {
+    for (const field of fields(twin, entry)) {
       const a = FIELDS[field](entry);
       const b = FIELDS[field](twin);
       const same = typeof a === 'number' && typeof b === 'number' ? sameNumber(a, b, 1e-9) : a === b;

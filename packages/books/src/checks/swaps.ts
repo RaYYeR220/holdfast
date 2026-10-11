@@ -1,9 +1,12 @@
-import { ZEC } from '../assets';
+import { type AssetDirectory, resolveAsset, ZEC } from '../assets';
 import type { LedgerEntry } from '../entry';
 import { uniqueBy } from '../ids';
+import { priceBook } from '../prices';
 import { type Findings, swapRef } from '../problems';
 import { isSwapFinal, type SwapRecord, SWAP_SUCCESS, swapSawDeposit } from '../records';
+import { swapEntries } from '../sources/swaps';
 import { BLOCK_CLOCK_ALLOWANCE_MS } from '../swap-funding';
+import { differsIn } from './same';
 
 function groupByRef(entries: readonly LedgerEntry[], kind: LedgerEntry['kind']): Map<string, LedgerEntry[]> {
   const groups = new Map<string, LedgerEntry[]>();
@@ -13,33 +16,33 @@ function groupByRef(entries: readonly LedgerEntry[], kind: LedgerEntry['kind']):
   return groups;
 }
 
+/** A ZEC price is not something a swap record fixes; a stablecoin's par value, or the absence of any value, is. */
+const valueIsFixed = (entry: LedgerEntry) => entry.asset !== ZEC.symbol;
+
 /**
- * The input leg: the swap against the treasury payment the ledger says funded
- * it. Returns the leg when it holds up. A swap paid in something other than
- * ZEC has only the leg booked from its own record, which there is nothing to
- * hold against.
+ * The input of a swap paid in ZEC: the treasury payment the ledger says
+ * funded it. Whether a swap was paid in ZEC is read from the swap record, not
+ * from how the ledger labels its legs. Returns the payment when it holds up.
  */
-function checkFunding(swap: SwapRecord, legs: readonly LedgerEntry[], out: Findings): LedgerEntry | null {
+function checkDeposit(swap: SwapRecord, legs: readonly LedgerEntry[], out: Findings): LedgerEntry | null {
   const ref = swapRef(swap.id);
   const fromTreasury = legs.filter((leg) => leg.source === 'zcash');
+  const fromRecord = legs.filter((leg) => leg.source !== 'zcash');
   const [funding] = fromTreasury;
 
   if (funding === undefined) {
-    const [recorded] = legs;
-    if (recorded === undefined) {
-      if (swapSawDeposit(swap)) {
-        out.error('swap_funding_mismatch', `swap ${swap.id} received a deposit of ${swap.amountIn} but the ledger has no input leg for it`, ref);
-      }
-      return null;
+    const [recorded] = fromRecord;
+    if (recorded !== undefined) {
+      out.error('unfunded_swap', `swap ${swap.id} took ${swap.amountIn} zat, and no transparent payment of that amount left the treasury for it`, ref, recorded.id);
+    } else if (swapSawDeposit(swap)) {
+      out.error('swap_funding_mismatch', `swap ${swap.id} received a deposit of ${swap.amountIn} but the ledger has no input leg for it`, ref);
     }
-    if (recorded.asset !== ZEC.symbol) return recorded;
-    out.error('unfunded_swap', `swap ${swap.id} took ${swap.amountIn} zat, and no transparent payment of that amount left the treasury for it`, ref, recorded.id);
     return null;
   }
 
-  const ids = fromTreasury.map((leg) => leg.id);
-  if (fromTreasury.length > 1) {
-    out.error('swap_funding_mismatch', `swap ${swap.id} is funded by ${fromTreasury.length} treasury payments; a swap has one deposit`, ref, ...ids);
+  const ids = legs.map((leg) => leg.id);
+  if (legs.length > 1) {
+    out.error('swap_funding_mismatch', `swap ${swap.id} has ${legs.length} input legs in the ledger; a swap has one deposit`, ref, ...ids);
     return null;
   }
   if (funding.amount !== -swap.amountIn) {
@@ -53,11 +56,39 @@ function checkFunding(swap: SwapRecord, legs: readonly LedgerEntry[], out: Findi
     out.error('swap_funding_mismatch', `the payment booked as the deposit of swap ${swap.id} was made ${when}`, ref, funding.id);
     return null;
   }
+  if (funding.counterparty?.address !== swap.depositAddress) {
+    out.error('swap_ledger_mismatch', `the payment booked as the deposit of swap ${swap.id} does not name the swap's deposit address`, ref, funding.id);
+    return null;
+  }
   return funding;
 }
 
-/** The output leg: what the swap service reports against what the ledger booked. Returns the arrival when it holds up. */
-function checkArrival(swap: SwapRecord, arrivals: readonly LedgerEntry[], out: Findings): LedgerEntry | null {
+/** The input of a swap paid in anything else: the one leg its own record gives, and no treasury payment. */
+function checkOwnLeg(swap: SwapRecord, legs: readonly LedgerEntry[], expected: LedgerEntry | undefined, out: Findings): LedgerEntry | null {
+  const ref = swapRef(swap.id);
+  const [leg] = legs;
+  if (expected === undefined) {
+    if (leg !== undefined) out.error('swap_ledger_mismatch', `the ledger books an input for swap ${swap.id}, which has seen no deposit`, ref, leg.id);
+    return null;
+  }
+  if (leg === undefined) {
+    out.error('swap_funding_mismatch', `swap ${swap.id} received a deposit of ${swap.amountIn} but the ledger has no input leg for it`, ref);
+    return null;
+  }
+  if (legs.length > 1) {
+    out.error('swap_funding_mismatch', `swap ${swap.id} has ${legs.length} input legs in the ledger; a swap has one deposit`, ref, ...legs.map((l) => l.id));
+    return null;
+  }
+  const field = differsIn(leg, expected, valueIsFixed(expected));
+  if (field !== null) {
+    out.error('swap_ledger_mismatch', `the input booked for swap ${swap.id} differs from the swap record in its ${field}`, ref, leg.id);
+    return null;
+  }
+  return leg;
+}
+
+/** The output leg: what the swap record says was delivered against what the ledger booked. Returns the arrival when it holds up. */
+function checkArrival(swap: SwapRecord, arrivals: readonly LedgerEntry[], expected: LedgerEntry | undefined, out: Findings): LedgerEntry | null {
   const ref = swapRef(swap.id);
   const [arrival] = arrivals;
 
@@ -67,7 +98,7 @@ function checkArrival(swap: SwapRecord, arrivals: readonly LedgerEntry[], out: F
     }
     return null;
   }
-  if (swap.amountOut === null || swap.destinationTxs.length === 0) {
+  if (swap.amountOut === null || swap.destinationTxs.length === 0 || expected === undefined) {
     const missing = swap.amountOut === null ? 'no amount delivered' : 'no destination transaction';
     out.error('swap_arrival_missing', `swap ${swap.id} is complete but records ${missing}`, ref);
     return null;
@@ -83,12 +114,9 @@ function checkArrival(swap: SwapRecord, arrivals: readonly LedgerEntry[], out: F
     out.error('swap_arrival_mismatch', `the ledger books ${arrivals.length} arrivals for swap ${swap.id}`, ref, ...arrivals.map((a) => a.id));
     return null;
   }
-  if (arrival.amount !== swap.amountOut) {
-    out.error('swap_arrival_mismatch', `swap ${swap.id} delivered ${swap.amountOut} but the ledger books ${arrival.amount}`, ref, arrival.id);
-    return null;
-  }
-  if (arrival.proof.tx === null || !swap.destinationTxs.includes(arrival.proof.tx)) {
-    out.error('swap_arrival_mismatch', `the arrival booked for swap ${swap.id} does not point at one of its destination transactions`, ref, arrival.id);
+  const field = differsIn(arrival, expected, valueIsFixed(expected));
+  if (field !== null) {
+    out.error('swap_arrival_mismatch', `the arrival booked for swap ${swap.id} differs from what the swap record says was delivered in its ${field}`, ref, arrival.id);
     return null;
   }
   return arrival;
@@ -97,12 +125,14 @@ function checkArrival(swap: SwapRecord, arrivals: readonly LedgerEntry[], out: F
 /**
  * Each swap against the treasury payment that funded it and against what
  * arrived. Which payment funded which swap is decided when the ledger is
- * built; here that pairing is held against the swap records, and every swap
- * leg in the ledger must belong to a swap.
+ * built; here that pairing is held against the swap records, every leg is
+ * held against the entry its record gives, and every swap leg in the ledger
+ * must belong to a swap.
  */
-export function checkSwaps(swaps: readonly SwapRecord[], ledger: readonly LedgerEntry[], out: Findings): void {
+export function checkSwaps(swaps: readonly SwapRecord[], ledger: readonly LedgerEntry[], assets: AssetDirectory, out: Findings): void {
   const inputs = groupByRef(ledger, 'swap_out');
   const outputs = groupByRef(ledger, 'swap_in');
+  const noPrices = priceBook([]);
 
   for (const swap of uniqueBy(swaps, (s) => s.id)) {
     const legs = inputs.get(swap.id) ?? [];
@@ -110,8 +140,14 @@ export function checkSwaps(swaps: readonly SwapRecord[], ledger: readonly Ledger
     inputs.delete(swap.id);
     outputs.delete(swap.id);
 
-    const funding = checkFunding(swap, legs, out);
-    const arrival = checkArrival(swap, arrivals, out);
+    // What the record alone gives: its own input leg, as if no treasury payment funded it, and its arrival.
+    const fromRecord = swapEntries({ swaps: [swap], fundedBy: new Map(), assets, prices: noPrices, explorers: {} });
+    const expectedInput = fromRecord.find((entry) => entry.kind === 'swap_out');
+    const expectedArrival = fromRecord.find((entry) => entry.kind === 'swap_in');
+    const paidInZec = resolveAsset(swap.originAsset, assets, 'unknown').chain === ZEC.chain;
+
+    const funding = paidInZec ? checkDeposit(swap, legs, out) : checkOwnLeg(swap, legs, expectedInput, out);
+    const arrival = checkArrival(swap, arrivals, expectedArrival, out);
     if (funding === null) continue;
 
     if (swap.state !== SWAP_SUCCESS) {

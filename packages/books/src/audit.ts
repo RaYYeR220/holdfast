@@ -1,7 +1,9 @@
+import { zatToZec } from '@holdfast/core';
 import { formatUnits } from './assets';
-import { isTreasuryZec, type LedgerEntry, sumAmounts } from './entry';
+import { belongsToItsSource, isTreasuryZec, type LedgerEntry, sumAmounts } from './entry';
 import { type DateRange, inRange, summariseFlows } from './flows';
-import type { Statement, StaleSource } from './statement';
+import type { HedgeFigures, Statement, StaleSource, TreasuryFigures } from './statement';
+import { isoTime } from './time';
 
 export const AUDIT_MODULES = ['treasury', 'hedge', 'swaps', 'payouts'] as const;
 export type AuditModule = (typeof AUDIT_MODULES)[number];
@@ -17,8 +19,39 @@ export interface ScopedStatement {
   ledger: LedgerEntry[];
 }
 
-/** A treasury payment into a swap belongs to both: it is the treasury's spend and the swap's input. */
+const isBound = (value: unknown): value is number | null => value === null || (typeof value === 'number' && Number.isFinite(value));
+const isModule = (value: unknown): value is AuditModule => AUDIT_MODULES.includes(value as AuditModule);
+
+/**
+ * Read a scope as it was stored with its link. A scope decides what an
+ * outsider sees, so one that is not exactly a scope is refused: a bound that
+ * is not a number or a module this version does not know must not be read as
+ * "no limit".
+ */
+export function parseAuditScope(value: unknown): AuditScope {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new RangeError('an audit scope must be an object');
+  const { from, to, modules } = value as Record<string, unknown>;
+  if (!isBound(from) || !isBound(to)) throw new RangeError('the dates of an audit scope must be timestamps or null');
+  if (!Array.isArray(modules) || !modules.every(isModule)) throw new RangeError(`the modules of an audit scope must be among ${AUDIT_MODULES.join(', ')}`);
+  return { from, to, modules: [...new Set(modules)] };
+}
+
+/** The same scope, or one that shows nothing where it is not a scope at all. */
+function closed(scope: AuditScope): AuditScope {
+  try {
+    return parseAuditScope(scope);
+  } catch {
+    return { from: null, to: null, modules: [] };
+  }
+}
+
+/**
+ * The modules an entry belongs to. A treasury payment into a swap belongs to
+ * both: it is the treasury's spend and the swap's input. An entry of a kind
+ * its source does not produce belongs to none and is shown to nobody.
+ */
 export function entryModules(entry: LedgerEntry): AuditModule[] {
+  if (!belongsToItsSource(entry)) return [];
   if (entry.kind === 'payout') return ['payouts'];
   if (entry.source === 'hyperliquid') return ['hedge'];
   if (entry.source === 'zcash') return entry.kind === 'swap_out' ? ['treasury', 'swaps'] : ['treasury'];
@@ -39,39 +72,65 @@ function staleInScope(stale: StaleSource, has: (module: AuditModule) => boolean)
  * Cut a statement and its ledger down to what a scope covers.
  *
  * Entries outside the scope are removed, and so is every reference to them
- * from the entries that stay. Period totals are worked out again from the
- * entries that remain. A figure that cannot be derived from those entries
- * alone would give away what was removed, so it is dropped rather than
- * carried over: a balance needs the whole history up to its date, a current
- * reading needs the scope's dates to include the statement's own, and value,
- * drift, runway and the series combine every module.
+ * from the entries that stay: the ids they link to, and, on a treasury
+ * payment into a swap shown without the swaps module, the swap it names.
+ * Every total is worked out again from the entries that remain; nothing is
+ * carried over that was computed from the whole ledger.
+ *
+ * A figure that the remaining entries cannot give would let its reader work
+ * out what was removed, so it is left out:
+ * - a balance, a position or a value is the sum of everything before it, and
+ *   is shown only to a scope that starts at the beginning;
+ * - a current reading is shown only when the scope's dates include the
+ *   statement's own;
+ * - the hedge target and its coverage are worked out from the treasury
+ *   balance, and are shown only with the treasury;
+ * - value, drift, runway and the series add every module together, and are
+ *   shown only with all of them.
  */
-export function scopeStatement(statement: Statement, ledger: readonly LedgerEntry[], scope: AuditScope): ScopedStatement {
+export function scopeStatement(statement: Statement, ledger: readonly LedgerEntry[], given: AuditScope): ScopedStatement {
+  const scope = closed(given);
   const has = (module: AuditModule) => scope.modules.includes(module);
   const range: DateRange = { from: later(statement.range.from, scope.from), to: earlier(statement.range.to, scope.to) };
 
   const visible = ledger.filter((entry) => inRange(entry.ts, scope) && entryModules(entry).some(has));
   const ids = new Set(visible.map((entry) => entry.id));
-  const scoped = visible.map((entry) => ({ ...entry, linked: entry.linked.filter((id) => ids.has(id)) }));
+  const scoped = visible.map((entry): LedgerEntry => {
+    const linked = entry.linked.filter((id) => ids.has(id));
+    const namesHiddenSwap = entry.kind === 'swap_out' && !has('swaps');
+    return namesHiddenSwap ? { ...entry, ref: '', counterparty: null, linked } : { ...entry, linked };
+  });
   const flows = summariseFlows(scoped, range);
 
   const everyModule = AUDIT_MODULES.every(has);
   const fromTheStart = scope.from === null;
-  const toThePresent = inRange(statement.asOf, scope);
-  const whole = everyModule && fromTheStart && toThePresent;
+  const current = inRange(statement.asOf, scope);
 
-  const treasuryEntries = scoped.filter(isTreasuryZec);
-  const balanceAtEnd = {
-    zat: sumAmounts(treasuryEntries),
-    untrackedZat: sumAmounts(treasuryEntries.filter((entry) => entry.kind === 'receipt_untracked')),
-    asOf: null,
-    px: null,
-    pxAt: null,
-    usd: null,
-  };
+  let treasury: TreasuryFigures | null = null;
+  if (has('treasury') && fromTheStart) {
+    const entries = scoped.filter(isTreasuryZec);
+    const reading = current ? statement.treasury : null;
+    // The balance is summed again from what the scope holds; where the statement gave none, neither does this.
+    const zat = reading !== null && reading.zat === null ? null : sumAmounts(entries);
+    const px = reading?.px ?? null;
+    treasury = {
+      zat,
+      untrackedZat: zat === null ? null : sumAmounts(entries.filter((entry) => entry.kind === 'receipt_untracked')),
+      asOf: reading?.asOf ?? null,
+      px,
+      pxAt: reading?.pxAt ?? null,
+      usd: zat === null || px === null ? null : zatToZec(zat) * px,
+    };
+  }
+
+  let hedge: HedgeFigures | null = null;
+  if (has('hedge') && fromTheStart && current && statement.hedge !== null) {
+    hedge = has('treasury') ? statement.hedge : { ...statement.hedge, targetLots: null, coverageBps: null };
+  }
+  const whole = everyModule && fromTheStart && current;
 
   return {
-    scope: { from: scope.from, to: scope.to, modules: [...scope.modules] },
+    scope,
     ledger: scoped,
     statement: {
       asOf: statement.asOf,
@@ -79,8 +138,8 @@ export function scopeStatement(statement: Statement, ledger: readonly LedgerEntr
       monthlyBurnUsd: whole ? statement.monthlyBurnUsd : null,
       staleAfterMs: statement.staleAfterMs,
       seriesStep: statement.seriesStep,
-      treasury: !has('treasury') || !fromTheStart ? null : toThePresent ? statement.treasury : balanceAtEnd,
-      hedge: has('hedge') && toThePresent ? statement.hedge : null,
+      treasury,
+      hedge,
       lock: whole ? statement.lock : null,
       receipts: has('treasury') ? flows.receipts : null,
       payments: has('treasury') ? flows.payments : null,
@@ -95,8 +154,8 @@ export function scopeStatement(statement: Statement, ledger: readonly LedgerEntr
       },
       payouts: has('payouts') ? flows.payouts : null,
       runwayMonths: whole ? statement.runwayMonths : null,
-      series: everyModule ? statement.series.filter((point) => inRange(point.t, scope)) : [],
-      stale: statement.stale.filter((s) => staleInScope(s, has)),
+      series: everyModule && fromTheStart ? statement.series.filter((point) => inRange(point.t, scope)) : [],
+      stale: current ? statement.stale.filter((s) => staleInScope(s, has)) : [],
       unpriced: flows.unpriced,
     },
   };
@@ -124,7 +183,11 @@ const COLUMNS = [
 ] as const;
 
 const NEEDS_QUOTES = /[",\r\n]/;
-const STARTS_A_FORMULA = /^[=+\-@\t\r]/;
+/** The full-width forms of = + - and @, which a spreadsheet may take for the plain ones. */
+const FULL_WIDTH_SIGNS = String.fromCharCode(0xff1d, 0xff0b, 0xff0d, 0xff20);
+
+/** A cell starts a formula if one of these signs is the first thing in it after any blanks, or if it starts with a tab or a line break. */
+const STARTS_A_FORMULA = new RegExp(`^\\s*[=+\\-@${FULL_WIDTH_SIGNS}]|^[\\t\\r\\n]`);
 
 function quote(cell: string): string {
   return NEEDS_QUOTES.test(cell) ? `"${cell.replaceAll('"', '""')}"` : cell;
@@ -141,21 +204,29 @@ function text(value: string): string {
   return quote(STARTS_A_FORMULA.test(value) ? `'${value}` : value);
 }
 
-const figure = (value: number | bigint | null): string => (value === null ? '' : String(value));
-const isoTime = (ms: number | null): string => (ms === null || !Number.isFinite(ms) ? '' : new Date(ms).toISOString());
+/** A figure is written bare only when it is one; anything else in its place is treated as the text it is. */
+function figure(value: number | bigint | null): string {
+  if (value === null) return '';
+  return typeof value === 'bigint' || (typeof value === 'number' && Number.isFinite(value)) ? String(value) : text(String(value));
+}
+
+function units(entry: LedgerEntry): string {
+  const plain = typeof entry.amount === 'bigint' && Number.isInteger(entry.decimals) && entry.decimals >= 0 && entry.decimals <= 36;
+  return plain ? formatUnits(entry.amount, entry.decimals) : '';
+}
 
 function row(entry: LedgerEntry): string {
   return [
     text(entry.id),
-    isoTime(entry.ts),
+    isoTime(entry.ts) ?? '',
     text(entry.source),
     text(entry.kind),
     text(entry.asset),
-    formatUnits(entry.amount, entry.decimals),
+    units(entry),
     figure(entry.amount),
     figure(entry.usd),
     figure(entry.usdPrice),
-    isoTime(entry.usdPriceAt),
+    isoTime(entry.usdPriceAt) ?? '',
     text(entry.ref),
     text(entry.counterparty?.name ?? ''),
     text(entry.counterparty?.address ?? ''),

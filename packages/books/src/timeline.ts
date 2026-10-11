@@ -1,6 +1,6 @@
 import { isUsablePrice, navUsd, zatToZec } from '@holdfast/core';
 import type { JournalEntry } from '@holdfast/engine';
-import type { LedgerEntry } from './entry';
+import { belongsToItsSource, type LedgerEntry } from './entry';
 
 /** The lock a moment falls under: the short opened from flat and not yet fully bought back. */
 export interface LockState {
@@ -37,6 +37,7 @@ const add = (a: number | null, b: number | null): number | null => (a === null |
 
 /** Ledger entries that change what the three legs are worth or count as money in or out. */
 function movesValue(entry: LedgerEntry): boolean {
+  if (!belongsToItsSource(entry)) return false;
   if (entry.kind === 'receipt' || entry.kind === 'payment' || entry.kind === 'payout') return true;
   // Swap proceeds delivered to the venue are part of its account value already.
   return entry.kind === 'swap_in' && entry.proof.chain !== 'hyperliquid';

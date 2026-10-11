@@ -1,4 +1,5 @@
-import { isReceipt, isTreasuryZec, type LedgerEntry } from './entry';
+import { belongsToItsSource, isReceipt, isTreasuryZec, type LedgerEntry } from './entry';
+import { isoTime } from './time';
 
 /** Inclusive at both ends, ms; a null end is open. */
 export interface DateRange {
@@ -88,7 +89,7 @@ function sumUsd(values: readonly (number | null)[]): number | null {
 }
 
 function monthOf(ts: number): string {
-  return Number.isFinite(ts) ? new Date(ts).toISOString().slice(0, 7) : 'unknown';
+  return isoTime(ts)?.slice(0, 7) ?? 'unknown';
 }
 
 /** Dollars that left, as a positive figure. Subtracting from zero keeps an empty total from reading as minus zero. */
@@ -138,12 +139,17 @@ function payoutFigures(payouts: readonly LedgerEntry[]): PayoutFigures {
   };
 }
 
-/** Value sent into each swap that delivered within the range, less the value it delivered. */
-function swapCost(arrivals: readonly LedgerEntry[], byId: ReadonlyMap<string, LedgerEntry>): number | null {
+/**
+ * Value sent into each swap that delivered within the range, less the value
+ * it delivered. The two legs are paired by the swap they both name, and a
+ * swap with no input leg, or with more than one, has no cost that can be
+ * stated.
+ */
+function swapCost(arrivals: readonly LedgerEntry[], deposits: readonly LedgerEntry[]): number | null {
   return sumUsd(
     arrivals.map((arrival) => {
-      const deposit = arrival.linked.map((id) => byId.get(id)).find((entry) => entry?.kind === 'swap_out');
-      if (deposit === undefined || deposit.usd === null || arrival.usd === null) return null;
+      const [deposit, ...others] = deposits.filter((entry) => entry.ref === arrival.ref);
+      if (deposit === undefined || others.length > 0 || deposit.usd === null || arrival.usd === null) return null;
       return 0 - deposit.usd - arrival.usd;
     }),
   );
@@ -154,14 +160,19 @@ function swapCost(arrivals: readonly LedgerEntry[], byId: ReadonlyMap<string, Le
  * `ledger` is everything known; only entries dated inside `range` are counted.
  */
 export function summariseFlows(ledger: readonly LedgerEntry[], range: DateRange): Flows {
-  const byId = new Map(ledger.map((entry) => [entry.id, entry]));
-  const entries = ledger.filter((entry) => inRange(entry.ts, range));
+  // An entry of a kind its source does not produce is checked by nothing and counts towards nothing.
+  const known = ledger.filter(belongsToItsSource);
+  const entries = known.filter((entry) => inRange(entry.ts, range));
   const ofKind = (...kinds: LedgerEntry['kind'][]) => entries.filter((entry) => kinds.includes(entry.kind));
 
   const networkFees = ofKind('network_fee');
   const networkUsd = paid(networkFees);
   const tradeUsd = paid(ofKind('trade_fee'));
-  const swapUsd = swapCost(ofKind('swap_in'), byId);
+  // A deposit made before the period still belongs to the swap that delivered inside it.
+  const swapUsd = swapCost(
+    ofKind('swap_in'),
+    known.filter((entry) => entry.kind === 'swap_out'),
+  );
   const funding = ofKind('funding');
 
   return {

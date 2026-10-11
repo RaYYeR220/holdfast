@@ -2,7 +2,7 @@ import { type LedgerEntry, parsePublishedStatement, type PublishedStatement, ser
 import { DEFAULT_POLICY } from '@holdfast/core';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { holdfast, NO_NETWORK, report, statuses, stepOf } from './harness';
-import { BIRTHDAY, demoWorld, GRANT_MEMO, HL_ACCOUNT, RECEIPT_TX, UFVK, type World } from './world';
+import { BIRTHDAY, demoWorld, GRANT_MEMO, HL_ACCOUNT, RECEIPT_TX, TREASURY_ADDRESS, UFVK, type World } from './world';
 
 const ALL_PASS = { journal: 'PASS', zcash: 'PASS', hyperliquid: 'PASS', reconciliation: 'PASS', arithmetic: 'PASS' };
 
@@ -24,15 +24,15 @@ const entry = (statement: PublishedStatement, match: (e: LedgerEntry) => boolean
 };
 
 /** Verify with the viewing key, against the fake chain and venue. */
-const online = (file: string) => holdfast(['verify', 'statement.json', '--json', '--ufvk', UFVK], { 'statement.json': file }, world.sources);
+const online = (file: string, ...more: string[]) => holdfast(['verify', 'statement.json', '--json', '--ufvk', UFVK, ...more], { 'statement.json': file }, world.sources);
 const offline = (file: string) => holdfast(['verify', 'statement.json', '--json', '--offline'], { 'statement.json': file });
 
 describe('verifying a consistent statement', () => {
-  it('passes every step', async () => {
+  it('passes every step and only then exits 0', async () => {
     const outcome = await online(world.file);
     expect(statuses(outcome)).toEqual(ALL_PASS);
     expect(outcome.code).toBe(0);
-    expect(report(outcome).ok).toBe(true);
+    expect(report(outcome)).toMatchObject({ ok: true, verdict: 'verified', ageMs: 300_000 });
   });
 
   it('says in one line what each step established', async () => {
@@ -41,21 +41,52 @@ describe('verifying a consistent statement', () => {
     expect(report(outcome).steps.map((s) => [s.title, s.reason])).toEqual([
       ['journal chain', '7 entries chain from the zero root, all decided under the published policy'],
       ['zcash', `blocks ${BIRTHDAY} to ${scannedTo}: all 4 entries match the chain, and the unspent notes hold the 1030000 zat the ledger adds up to`],
-      ['hyperliquid', `account ${HL_ACCOUNT}: all 4 entries match 1 fills and 2 funding payments, and the short of 1 lot(s) in the latest journal snapshot`],
-      ['reconciliation', '5 matches between payouts, swaps, orders, balances and their evidence; nothing disagrees'],
+      ['hyperliquid', `account ${HL_ACCOUNT}: all 4 entries match 1 fills and 2 funding payments, and the short of 1 lot(s) they leave`],
+      ['reconciliation', "the statement's records agree with each other in 5 places; nothing disagrees"],
       ['arithmetic', expect.stringMatching(/^all \d+ figures follow from the ledger and the journal$/)],
     ]);
+  });
+
+  it('says beside each pass what that pass still rests on', async () => {
+    const outcome = await online(world.file);
+    const scannedTo = world.published.org.zcash.scannedTo as number;
+    expect(stepOf(outcome, 'zcash').details).toEqual([
+      `the key is the key of ${TREASURY_ADDRESS}; that this is the address the organisation is paid at is for the reader to know`,
+      `the scan starts at block ${BIRTHDAY}, which the statement gives as the treasury's first; name your own with --birthday if you know it`,
+      `the chain is now at block ${scannedTo}, 0 blocks past the end of the statement`,
+      '1 of the payments are booked as deposits into swaps; the chain shows the payments, not what they paid for',
+    ]);
+    expect(stepOf(outcome, 'hyperliquid').details).toEqual([
+      'the account is the one the statement names; name the one you expect with --hyperliquid-account',
+      'the account value the journal recorded at each moment is not something the venue can be asked for afterwards',
+    ]);
+    expect(stepOf(outcome, 'reconciliation').details).toEqual([
+      'the 1 payout run(s) are held against the transfers the statement itself lists; Tempo and Solana were not read',
+      "the 1 swap(s) are held against the statement's own swap records; the swap service was not asked",
+    ]);
+    expect(stepOf(outcome, 'arithmetic').details).toEqual([
+      "runway is measured against a monthly burn of $4, which is the organisation's own figure",
+      "the dollar price applied to each ZEC entry is the ledger's own; no price source was consulted",
+    ]);
+    expect(stepOf(outcome, 'journal').details).toEqual(['the chain shows the journal was not altered after it was written; nothing here shows it is the only journal ever written']);
   });
 
   it('prints a readable report by default', async () => {
     const outcome = await holdfast(['verify', 'statement.json', '--ufvk', UFVK], { 'statement.json': world.file }, world.sources);
     const lines = outcome.out.split('\n');
     expect(lines[0]).toBe('Statement statement.json');
-    expect(lines[1]).toBe('  Holdfast demo treasury (holdfast-demo), as of 2026-10-09T16:30:30.000Z');
+    expect(lines[1]).toBe('  Holdfast demo treasury (holdfast-demo), as of 2026-10-09T16:30:30.000Z, 5 minutes ago');
     expect(lines.filter((line) => line.startsWith('  PASS    '))).toHaveLength(5);
-    expect(lines.at(-1)).toBe('Verified: 5 of 5 steps passed.');
+    expect(lines.at(-1)).toBe('VERIFIED: all 5 steps passed.');
     expect(outcome.code).toBe(0);
     expect(outcome.err).toBe('');
+  });
+
+  it('accepts the birthday and the account the reader already knows', async () => {
+    const outcome = await online(world.file, '--birthday', String(BIRTHDAY), '--hyperliquid-account', HL_ACCOUNT.toUpperCase().replace('0X', '0x'));
+    expect(statuses(outcome)).toEqual(ALL_PASS);
+    expect(stepOf(outcome, 'zcash').details[1]).toBe(`the scan starts at block ${BIRTHDAY}, as asked`);
+    expect(stepOf(outcome, 'hyperliquid').details[0]).toBe('the account is the one asked for');
   });
 
   it('really is the demo history: the grant, the swap and the short', () => {
@@ -90,6 +121,7 @@ describe('a journal that was touched', () => {
     expect(statuses(outcome)).toEqual({ ...ALL_PASS, journal: 'FAIL' });
     expect(stepOf(outcome, 'journal').reason).toBe('entry 3 content does not match its digest');
     expect(outcome.code).toBe(1);
+    expect(report(outcome)).toMatchObject({ ok: false, verdict: 'failed' });
   });
 
   it('fails on an entry whose recorded balance was changed', async () => {
@@ -123,6 +155,7 @@ describe('a journal that was touched', () => {
     });
     const outcome = await offline(file);
     expect(stepOf(outcome, 'journal')).toMatchObject({ status: 'FAIL', reason: 'entry 7, the latest, was not decided under the published policy' });
+    expect(stepOf(outcome, 'arithmetic').status).toBe('FAIL');
     expect(outcome.code).toBe(1);
   });
 
@@ -170,7 +203,7 @@ describe('a ledger that was touched', () => {
     });
     const outcome = await offline(file);
     expect(statuses(outcome)).toMatchObject({ reconciliation: 'FAIL', arithmetic: 'FAIL' });
-    expect(stepOf(outcome, 'reconciliation').reason).toBe('1 error: payout_ledger_mismatch');
+    expect(stepOf(outcome, 'reconciliation').reason).toBe('2 errors: malformed_entry, payout_ledger_mismatch');
   });
 
   it('fails on an entry that appears twice', async () => {
@@ -224,10 +257,21 @@ describe('a ledger that leaves out what the chain shows', () => {
     expect(zcash.details[0]).toContain('the chain shows this receipt of 50000 ZEC base units');
   });
 
-  it('does not count what happened on chain after the block the statement covers', async () => {
+  it('does not count what happened on chain after the block the statement covers, and says how far the chain has moved on', async () => {
     world.clock.ms += 10 * 60_000;
     world.chain.receive('cd'.repeat(32), 50_000n, 'after the statement');
-    expect(statuses(await online(world.file))).toEqual(ALL_PASS);
+    const outcome = await online(world.file);
+    expect(statuses(outcome)).toEqual(ALL_PASS);
+    expect(stepOf(outcome, 'zcash').details[2]).toMatch(/, 8 blocks past the end of the statement$/);
+  });
+
+  it('fails on a shielded payment dressed up as the deposit of a swap', async () => {
+    // A swap deposit is a transparent payment. Here the treasury's one transparent payment is a shielded one on chain.
+    const [spend] = world.chain.mined.filter((tx) => tx.outgoing.length > 0);
+    spend!.outgoing[0] = { ...spend!.outgoing[0]!, id: `${spend!.txid}:orchard:out`, pool: 'orchard', memo: 'to a friend' };
+    const zcash = stepOf(await online(world.file), 'zcash');
+    expect(zcash.status).toBe('FAIL');
+    expect(zcash.details.join('\n')).toContain('the chain shows this payment of -930000 ZEC base units, and the ledger does not have it');
   });
 });
 
@@ -274,7 +318,7 @@ describe('published figures', () => {
     expect(details).toContain('series.length: published 6, recomputed 7');
   });
 
-  it('recomputes under the settings the statement names', async () => {
+  it('recomputes under the series step the statement names', async () => {
     const file = tampered((s) => {
       s.statement.seriesStep = 'day';
     });
@@ -293,12 +337,11 @@ describe('the venue', () => {
     expect(venue.reason).toMatch(/: 2 on the venue but not in the ledger, 0 in the ledger but not on the venue, 0 that differ$/);
   });
 
-  it('fails when the position is not the one the journal recorded', async () => {
+  it('fails when the position is not the one the ledger adds up to', async () => {
     world.venue.shortLots = 3;
-    const venue = stepOf(await online(world.file), 'hyperliquid');
-    expect(venue).toMatchObject({
+    expect(stepOf(await online(world.file), 'hyperliquid')).toMatchObject({
       status: 'FAIL',
-      reason: "the journal's latest snapshot records a short of 1 lot(s); the venue's position and fills give 3 at that moment",
+      reason: "the fills in the ledger leave a short of 1 lot(s); the venue's position and later fills give 3 at the end of the statement's history",
     });
   });
 
@@ -306,41 +349,45 @@ describe('the venue', () => {
     const through = world.published.org.hyperliquid.through;
     world.venue.fills.push({ ...world.venue.fills[0]!, cloid: '0x00000000000000000000000000000002', oid: '570748780002', tid: '1000', time: through + 60_000, size: 0.02 });
     world.venue.shortLots = 3;
-    expect(statuses(await online(world.file))).toEqual(ALL_PASS);
+    const outcome = await online(world.file);
+    expect(statuses(outcome)).toEqual(ALL_PASS);
+    expect(stepOf(outcome, 'hyperliquid').details).toContain('the account has made 1 fills since the statement');
   });
 
-  it('skips fills too old for the venue to serve, and says how many entries that left unchecked', async () => {
-    const [real] = world.venue.fills;
-    const through = world.published.org.hyperliquid.through;
-    // A venue that has since seen ten thousand newer fills no longer serves the one the ledger was built from.
-    const newer = Array.from({ length: 10_000 }, (_, i) => ({ ...real!, tid: `n${i}`, time: through + 1_000 + i, side: i % 2 === 0 ? ('buy' as const) : ('sell' as const) }));
-    world.venue.fills.splice(0, 1, ...newer);
-    const venue = stepOf(await online(world.file), 'hyperliquid');
-    expect(venue.status).toBe('PASS');
-    expect(venue.details).toEqual([`the venue no longer serves fills before ${new Date(through + 1_000).toISOString()}; 2 older entries could not be checked`]);
+  it('holds the journal snapshot against the venue too', async () => {
+    const file = tampered((s) => {
+      s.journal.at(-1)!.snapshot.hl!.shortLots = 2;
+    });
+    expect(stepOf(await online(file), 'hyperliquid').reason).toBe("the journal's latest snapshot records a short of 2 lot(s); the venue's position and fills give 1 at that moment");
   });
 });
 
-describe('what cannot be reached is skipped, never passed', () => {
-  it('skips both chain steps offline and touches no network', async () => {
+describe('what was not checked is not verified', () => {
+  it('runs neither chain step offline, touches no network, and does not call the result verified', async () => {
     const outcome = await holdfast(['verify', 'statement.json', '--json', '--offline', '--ufvk', UFVK], { 'statement.json': world.file }, NO_NETWORK);
     expect(statuses(outcome)).toEqual({ ...ALL_PASS, zcash: 'SKIPPED', hyperliquid: 'SKIPPED' });
     expect(stepOf(outcome, 'zcash').reason).toBe('not run: --offline');
     expect(stepOf(outcome, 'hyperliquid').reason).toBe('not run: --offline');
-    expect(outcome.code).toBe(0);
+    expect(report(outcome)).toMatchObject({ ok: false, verdict: 'not verified' });
+    expect(outcome.code).toBe(1);
     expect(world.chain.scans).toBe(7);
     expect(world.venue.reads).toBe(7);
   });
 
   it('says so in the verdict', async () => {
     const outcome = await holdfast(['verify', 'statement.json', '--offline'], { 'statement.json': world.file });
-    expect(outcome.out.split('\n').at(-1)).toBe('Verified: 3 of 5 steps passed; 2 steps were skipped and proved nothing.');
+    expect(outcome.out.split('\n').at(-1)).toBe(
+      'NOT VERIFIED: zcash, hyperliquid were not run, and a statement is verified only when every step has passed. The steps that ran found nothing wrong.',
+    );
+    expect(outcome.out).not.toMatch(/^VERIFIED/m);
   });
 
-  it('skips the Zcash step without a viewing key and still checks the venue', async () => {
+  it('does not run the Zcash step without a viewing key, and one step not run is enough', async () => {
     const outcome = await holdfast(['verify', 'statement.json', '--json'], { 'statement.json': world.file }, world.sources);
     expect(statuses(outcome)).toEqual({ ...ALL_PASS, zcash: 'SKIPPED' });
     expect(stepOf(outcome, 'zcash').reason).toBe('not run: no viewing key given (--ufvk or --ufvk-file)');
+    expect(report(outcome).verdict).toBe('not verified');
+    expect(outcome.code).toBe(1);
     expect(world.chain.scans).toBe(7);
   });
 
@@ -350,14 +397,7 @@ describe('what cannot be reached is skipped, never passed', () => {
     expect(statuses(outcome)).toEqual({ ...ALL_PASS, zcash: 'SKIPPED' });
     expect(stepOf(outcome, 'zcash').reason).toBe('the chain could not be read: no Zcash endpoint answered: https://zec.rocks:443 (deadline exceeded for [viewing key])');
     expect(outcome.out + outcome.err).not.toContain(UFVK);
-    expect(outcome.code).toBe(0);
-  });
-
-  it('skips an endpoint that has not reached the block the statement covers', async () => {
-    world.chain.behind = 40;
-    const zcash = stepOf(await online(world.file), 'zcash');
-    expect(zcash.status).toBe('SKIPPED');
-    expect(zcash.reason).toMatch(/^the endpoint is at block \d+, behind block \d+ the statement covers$/);
+    expect(outcome.code).toBe(1);
   });
 
   it('skips a venue it cannot read, with the error', async () => {
@@ -365,20 +405,22 @@ describe('what cannot be reached is skipped, never passed', () => {
     const outcome = await online(world.file);
     expect(statuses(outcome)).toEqual({ ...ALL_PASS, hyperliquid: 'SKIPPED' });
     expect(stepOf(outcome, 'hyperliquid').reason).toBe('the venue could not be read: info userFillsByTime: timed out after 10000 ms');
+    expect(outcome.code).toBe(1);
   });
 
-  it('skips a source that cannot even be set up', async () => {
+  it('skips sources that cannot even be set up', async () => {
     const outcome = await holdfast(['verify', 'statement.json', '--json', '--ufvk', UFVK], { 'statement.json': world.file }, NO_NETWORK);
     expect(statuses(outcome)).toEqual({ ...ALL_PASS, zcash: 'SKIPPED', hyperliquid: 'SKIPPED' });
+    expect(stepOf(outcome, 'zcash').reason).toBe('the viewing key could not be examined: the test reached for the key library');
   });
 
-  it('still fails when a skipped step sits beside a failed one', async () => {
+  it('names the failure first when a step failed and others were not run', async () => {
     const file = tampered((s) => {
       s.statement.treasury!.zat! += 1n;
     });
     const outcome = await holdfast(['verify', 'statement.json', '--offline'], { 'statement.json': file });
     expect(outcome.code).toBe(1);
-    expect(outcome.out.split('\n').at(-1)).toBe('NOT VERIFIED: 1 step failed; 2 steps were skipped and proved nothing.');
+    expect(outcome.out.split('\n').at(-1)).toBe('FAILED: arithmetic. Not run: zcash, hyperliquid.');
   });
 });
 
@@ -389,7 +431,7 @@ describe('the viewing key', () => {
     expect(statuses(outcome)).toEqual(ALL_PASS);
   });
 
-  it('is given to the scanner with the range the statement names', async () => {
+  it('is given to the scanner with the range the journal confirmed, on the endpoints the reader named', async () => {
     const asked: unknown[] = [];
     const scan = world.chain.scan.bind(world.chain);
     world.chain.scan = async (i) => {
@@ -397,10 +439,10 @@ describe('the viewing key', () => {
       return scan(i);
     };
     const endpoints: unknown[] = [];
-    const sources = { ...world.sources, zcash: async (network: string, given: readonly string[]) => (endpoints.push([network, given]), world.chain) };
+    const sources = { ...world.sources, zcash: async (given: readonly string[]) => (endpoints.push(given), world.chain) };
     await holdfast(['verify', 'statement.json', '--ufvk', UFVK, '--zcash-endpoint', 'https://a:443', '--zcash-endpoint=https://b:443'], { 'statement.json': world.file }, sources);
     expect(asked).toEqual([{ ufvk: UFVK, fromHeight: BIRTHDAY, toHeight: world.published.org.zcash.scannedTo, knownNullifiers: [] }]);
-    expect(endpoints).toEqual([['mainnet', ['https://a:443', 'https://b:443']]]);
+    expect(endpoints).toEqual([['https://a:443', 'https://b:443']]);
   });
 
   it('must come from one place', async () => {
@@ -444,9 +486,10 @@ describe('files that are not statements', () => {
     expect(outcome.err).toMatch(/statement file\.ledger\[0\]\.decimals: expected a whole number/);
   });
 
-  it('wants exactly one file', async () => {
+  it('wants exactly one file and options it knows', async () => {
     expect((await holdfast(['verify'])).err).toMatch(/^holdfast: verify needs a statement file/);
     expect((await holdfast(['verify', 'a.json', 'b.json'])).err).toMatch(/^holdfast: verify takes one statement file, got 2/);
     expect((await holdfast(['verify', 'a.json', '--fast'])).err).toMatch(/^holdfast: unknown option --fast/);
+    expect((await holdfast(['verify', 'a.json', '--birthday', 'genesis'])).err).toMatch(/^holdfast: --birthday takes a block height, got "genesis"/);
   });
 });

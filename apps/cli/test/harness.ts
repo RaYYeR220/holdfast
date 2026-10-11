@@ -4,6 +4,9 @@ import type { StepId, StepResult, StepStatus } from '../src/verify/report';
 
 /** Sources for a test that must not reach the network at all. */
 export const NO_NETWORK: Sources = {
+  describeKey: async () => {
+    throw new Error('the test reached for the key library');
+  },
   zcash: async () => {
     throw new Error('the test reached for the Zcash network');
   },
@@ -11,6 +14,9 @@ export const NO_NETWORK: Sources = {
     throw new Error('the test reached for Hyperliquid');
   },
 };
+
+/** When the reader runs the tool: five minutes after the demo statement was made. */
+export const READING_AT = Date.parse('2026-10-09T16:35:30Z');
 
 export interface Outcome {
   code: number;
@@ -32,6 +38,7 @@ export async function holdfast(argv: string[], files: Record<string, string> = {
       return content;
     },
     sources,
+    now: () => READING_AT,
     ...over,
   };
   const code = await run(argv, env);
@@ -40,6 +47,8 @@ export async function holdfast(argv: string[], files: Record<string, string> = {
 
 export interface VerifyReport {
   ok: boolean;
+  verdict: 'verified' | 'not verified' | 'failed';
+  ageMs: number;
   steps: (StepResult & { title: string })[];
 }
 

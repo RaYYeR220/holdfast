@@ -25,6 +25,11 @@ import type { Sources, VenueReader } from '../src/env';
 
 export const ORG = 'holdfast-demo';
 export const UFVK = 'uview1qqqqdemoviewingkeythatmustneverbeprinted0000000000';
+export const TREASURY_ADDRESS = 'u1holdfastdemotreasury0address';
+/** A viewing key that is a real key, of somebody else's account. */
+export const OTHER_UFVK = 'uview1qqqqsomebodyelsesviewingkey00000000000000000000000';
+export const OTHER_ADDRESS = 'u1somebodyelse0address';
+export const TESTNET_UFVK = 'uviewtest1qqqqatestnetviewingkey000000000000000000000000';
 export const HL_ACCOUNT = '0xda22459d4776c240e9182be9e569f07617cef664';
 export const BIRTHDAY = 3_512_000;
 export const RECEIPT_TX = '27472243738462004e72b46b2b2f3ba20318d36d3ee1f0fbcb93ef5aa2e6ff84';
@@ -177,7 +182,9 @@ export class FakeVenue implements HedgeVenue, VenueReader {
     return { ok: true, filledLots: order.lots, avgPx: this.markPx, oid, error: null };
   }
 
+  /** Funding is paid on a position; an account without one gets no payment at all. */
   payFunding(): void {
+    if (this.shortLots === 0) return;
     const usd = Math.round(HOURLY_FUNDING_RATE * (this.shortLots / 100) * this.markPx * 1_000_000) / 1_000_000;
     this.cash += usd;
     this.funding.push({ time: this.clock.now(), coin: 'ZEC', usd, size: -this.shortLots / 100, fundingRate: HOURLY_FUNDING_RATE });
@@ -249,18 +256,35 @@ export interface World {
   file: string;
 }
 
+export interface WorldOptions {
+  /** The first block the organisation says its treasury could hold funds in. */
+  birthday?: number;
+  /** The organisation's own scanner never reaches the chain, so its books hold no Zcash history at all. */
+  blindToZcash?: boolean;
+}
+
+/** What each viewing key is the key of. The address comes from the key, never from a statement. */
+async function describeKey(ufvk: string) {
+  if (ufvk === UFVK) return { ok: true as const, network: 'mainnet' as const, address: TREASURY_ADDRESS };
+  if (ufvk === OTHER_UFVK) return { ok: true as const, network: 'mainnet' as const, address: OTHER_ADDRESS };
+  if (ufvk === TESTNET_UFVK) return { ok: true as const, network: 'testnet' as const, address: 'utest1demo' };
+  return { ok: false as const, error: 'the key does not decode' };
+}
+
 /**
  * The demo treasury's first day, lived through by the real engine against a
  * fake chain and a fake venue: a grant arrives, part of it is swapped into
  * margin, the controller opens the short, funding is paid and a small payout
  * run goes out. The statement is then published the way the app would.
  */
-export async function demoWorld(): Promise<World> {
+export async function demoWorld(options: WorldOptions = {}): Promise<World> {
   const clock = new Clock();
   const chain = new FakeChain(clock);
   const venue = new FakeVenue(clock);
   const store = new MemoryStore();
-  store.addOrg({ id: ORG, ufvk: UFVK, birthday: BIRTHDAY, hlUser: HL_ACCOUNT, policy: DEFAULT_POLICY, lockEnabled: true });
+  const birthday = options.birthday ?? BIRTHDAY;
+  store.addOrg({ id: ORG, ufvk: UFVK, birthday, hlUser: HL_ACCOUNT, policy: DEFAULT_POLICY, lockEnabled: true });
+  if (options.blindToZcash === true) chain.down = 'lightwalletd unreachable';
 
   const reference = { zecUsd: async () => ({ px: venue.markPx, asOf: clock.now() }) };
   const tickAt = async (time: string, markPx: number) => {
@@ -295,13 +319,15 @@ export async function demoWorld(): Promise<World> {
   const now = at('16:30:30');
   const journal = store.journal(ORG);
   const { scannedTo } = await store.loadOrg(ORG);
+  const blind = options.blindToZcash === true;
+  const swaps = blind ? [] : [marginSwap];
   const ledger = buildLedger({
     notes: store.notes(ORG),
     outgoing: store.outgoing(ORG),
-    fees: chain.fees(),
+    fees: blind ? [] : chain.fees().filter((fee) => store.outgoing(ORG).some((out) => out.txid === fee.txid)),
     fills: venue.fills,
     funding: venue.funding,
-    swaps: [marginSwap],
+    swaps,
     payoutRuns: payouts.map((p) => p.run),
     prices: journal.flatMap((entry) => (entry.snapshot.ref === null ? [] : [{ ts: entry.snapshot.ref.asOf, px: entry.snapshot.ref.px }])),
     assets: { [TEMPO_PATH_USD]: { symbol: 'pathUSD', decimals: 6, chain: 'tempo', usdPegged: true } },
@@ -311,21 +337,23 @@ export async function demoWorld(): Promise<World> {
     org: {
       id: ORG,
       name: 'Holdfast demo treasury',
-      zcash: { network: 'mainnet', birthday: BIRTHDAY, scannedTo },
+      zcash: { network: 'mainnet', address: TREASURY_ADDRESS, birthday, scannedTo },
       hyperliquid: { account: HL_ACCOUNT, since: GENESIS, through: now },
       payoutAccounts: [{ chain: 'tempo', account: '0x52908400098527886E0F7030069857D2E4169EE7', token: TEMPO_PATH_USD }],
     },
     policy: DEFAULT_POLICY,
     ledger,
     journal,
-    swaps: [marginSwap],
+    swaps,
     payouts,
     now,
     monthlyBurnUsd: 4,
     seriesStep: 'entry',
   });
   clock.ms = now;
+  // Whatever kept the organisation's own scanner from the chain, the reader's reaches it.
+  chain.down = null;
 
-  const sources: Sources = { zcash: async () => chain, hyperliquid: async () => venue };
+  const sources: Sources = { describeKey, zcash: async () => chain, hyperliquid: async () => venue };
   return { clock, chain, venue, sources, published, file: serializePublishedStatement(published) };
 }

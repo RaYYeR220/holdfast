@@ -1,7 +1,7 @@
 import type { OutgoingPayment, OwnedNote } from '@holdfast/core';
 import { describe, expect, it } from 'vitest';
 import { buildLedger, buildStatement, isTreasuryZec, type LedgerEntry, type Statement, type SwapRecord, sumAmounts } from '../src/index';
-import { CLOID, NOW, POLICY, USDC_SOLANA_ID, ZEC_ID, historyWithPayouts, journalOf, payoutAssets, realHistory, realTicks, tempoRun } from './fixtures';
+import { CLOID, NOW, PAYOUTS_NOW, POLICY, USDC_SOLANA_ID, ZEC_ID, historyWithPayouts, journalOf, realHistory, realTicks, solanaRun, tempoRun } from './fixtures';
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -95,8 +95,8 @@ describe('the statement of the demo treasury', () => {
 
 describe('conservation', () => {
   it('accounts for the balance: received, less swapped, paid and fees', () => {
-    for (const history of [realHistory(), historyWithPayouts()]) {
-      const s = statementOf(history);
+    for (const [history, now] of [[realHistory(), NOW], [historyWithPayouts(), PAYOUTS_NOW]] as const) {
+      const s = statementOf(history, { now });
       const ledger = buildLedger(history.records);
       const held = history.records.notes.filter((n) => !n.spent).reduce((sum, n) => sum + n.zat, 0n);
       expect(s.treasury?.zat).toBe(held);
@@ -108,7 +108,7 @@ describe('conservation', () => {
   it('reports totals that are the sums of the ledger', () => {
     const history = historyWithPayouts();
     const ledger = buildLedger(history.records);
-    const s = statementOf(history);
+    const s = statementOf(history, { now: PAYOUTS_NOW });
     const usdOf = (kind: LedgerEntry['kind']) => ledger.filter((e) => e.kind === kind).reduce((sum, e) => sum + (e.usd ?? Number.NaN), 0);
 
     expect(s.funding?.usd).toBeCloseTo(usdOf('funding'), 12);
@@ -125,7 +125,7 @@ describe('conservation', () => {
 });
 
 describe('payouts', () => {
-  const s = statementOf(historyWithPayouts());
+  const s = statementOf(historyWithPayouts(), { now: PAYOUTS_NOW });
 
   it('groups them by month, by payee and by token', () => {
     expect(s.payouts).toEqual({
@@ -147,20 +147,20 @@ describe('payouts', () => {
   });
 
   it('limits the period figures to the range asked for', () => {
-    const october = statementOf(historyWithPayouts(), { range: { from: Date.parse('2026-10-10T00:00:00Z'), to: Date.parse('2026-10-31T23:59:59Z') } });
+    const october = statementOf(historyWithPayouts(), { now: PAYOUTS_NOW, range: { from: Date.parse('2026-10-10T00:00:00Z'), to: Date.parse('2026-10-31T23:59:59Z') } });
     expect(october.payouts).toMatchObject({ usd: 750, count: 2, byPeriod: [{ period: '2026-10', usd: 750, count: 2 }] });
     expect(october.receipts).toMatchObject({ zat: 250_000_000n, count: 1 });
     expect(october.funding).toEqual({ usd: 0, count: 0 });
     expect(october.fees.networkZat).toBe(10_000n);
-    expect(october.series).toEqual([]);
+    expect(october.series.map((p) => p.seq)).toEqual([6]);
     // The balance is what the treasury holds now, whatever period is reported on.
     expect(october.treasury?.zat).toBe(s.treasury?.zat);
   });
 
   it('leaves a total unknown when one of its payouts has no dollar value', () => {
     const history = historyWithPayouts();
-    const { [tempoRun.token]: _unknown, ...withoutTempo } = payoutAssets;
-    const partial = statementOf({ ...history, records: { ...history.records, assets: withoutTempo } });
+    const unlisted = { ...tempoRun, token: '0x1111111111111111111111111111111111111111' };
+    const partial = statementOf({ ...history, records: { ...history.records, payoutRuns: [unlisted, solanaRun] } }, { now: PAYOUTS_NOW });
     expect(partial.payouts).toMatchObject({ usd: null, count: 3 });
     expect(partial.payouts?.byPeriod).toEqual([
       { period: '2026-10', usd: null, count: 2 },

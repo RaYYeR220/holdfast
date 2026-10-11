@@ -1,5 +1,7 @@
 import type { JournalEntry } from '@holdfast/engine';
+import { type AssetDirectory, KNOWN_ASSETS } from './assets';
 import { checkBalances } from './checks/balance';
+import { checkEntries } from './checks/entries';
 import { checkOrders } from './checks/orders';
 import { checkPayouts } from './checks/payouts';
 import { checkSwaps } from './checks/swaps';
@@ -14,6 +16,12 @@ export interface ReconcileInput {
   /** Every payout run beside what its chain shows for it. */
   payouts?: readonly PayoutEvidence[];
   swaps?: readonly SwapRecord[];
+  /**
+   * Tokens beyond the built-in ones, as given to `buildLedger`. This is the
+   * caller's own knowledge of each token's decimals and peg; it must never be
+   * filled from the records being reconciled.
+   */
+  assets?: AssetDirectory;
 }
 
 /** A record given twice would be matched twice, or once and hide that the other copy differs. */
@@ -35,6 +43,7 @@ export function reconcile(input: ReconcileInput): Reconciliation {
   const out = new Findings();
   const payouts = input.payouts ?? [];
   const swaps = input.swaps ?? [];
+  const assets = { ...KNOWN_ASSETS, ...input.assets };
 
   const attempt = (what: string, check: () => void) => {
     try {
@@ -52,8 +61,9 @@ export function reconcile(input: ReconcileInput): Reconciliation {
       checkDuplicates(run.lines, `line of run ${run.id} numbered`, (line) => String(line.lineNo), () => runRef(run.id), out);
     }
   });
-  attempt('payouts', () => checkPayouts(payouts, input.ledger, out));
-  attempt('swaps', () => checkSwaps(swaps, input.ledger, out));
+  attempt('the ledger', () => checkEntries(input.ledger, out));
+  attempt('payouts', () => checkPayouts(payouts, input.ledger, assets, out));
+  attempt('swaps', () => checkSwaps(swaps, input.ledger, assets, out));
   attempt('orders', () => checkOrders(input.journal, input.ledger, out));
   attempt('treasury balances', () => checkBalances(input.journal, input.ledger, out));
 

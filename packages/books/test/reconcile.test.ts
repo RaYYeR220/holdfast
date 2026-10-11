@@ -39,7 +39,8 @@ import {
   tempoRun,
 } from './fixtures';
 
-type Books = { -readonly [K in keyof Required<ReconcileInput>]: Required<ReconcileInput>[K] extends readonly (infer T)[] ? T[] : never };
+type Records = Required<Omit<ReconcileInput, 'assets'>>;
+type Books = { -readonly [K in keyof Records]: Records[K] extends readonly (infer T)[] ? T[] : never };
 
 function books(history: History = realHistory()): Books {
   return {
@@ -216,7 +217,7 @@ describe('payout lines against transfers on chain', () => {
     expect(only(changed, 'payout_ledger_mismatch').refs).toEqual(['payout:HF-2026-10-0001:1']);
 
     const dropped = reconcile({ ...all, ledger: all.ledger.filter((e) => e.id !== 'payout:HF-2026-10-0001:2') });
-    expect(only(dropped, 'payout_ledger_mismatch').detail).toBe('line 2 of run HF-2026-10-0001 is paid but is not in the ledger');
+    expect(only(dropped, 'payout_ledger_mismatch').detail).toBe('payout:HF-2026-10-0001:2 is a paid line of run HF-2026-10-0001 and is not in the ledger');
 
     const unbacked = reconcile({ ...all, payouts: all.payouts.filter((p) => p.run.id !== solanaRun.id) });
     expect(only(unbacked, 'payout_ledger_mismatch').detail).toBe('ledger entry payout:HF-2026-11-0001:1 has no paid payout line behind it');
@@ -471,9 +472,12 @@ describe('recorded balances against the ledger', () => {
   });
 
   it('does not count a block the scan had not reached', () => {
-    const early = journalOf([{ at: RECEIPT_TIME + 30_000, treasury: { zat: 0n, scannedTo: RECEIPT_HEIGHT - 1 }, venue: null }]);
-    const result = reconcile({ ledger: buildLedger({ notes: [receiptNote] }), journal: early });
-    expect(result).toEqual({ matched: [{ kind: 'balance', refs: ['journal:1'] }], problems: [] });
+    const journal = journalOf([
+      { at: RECEIPT_TIME + 30_000, treasury: { zat: 0n, scannedTo: RECEIPT_HEIGHT - 1 }, venue: null },
+      { at: RECEIPT_TIME + 90_000, treasury: { zat: 1_975_000n, scannedTo: RECEIPT_HEIGHT }, venue: null },
+    ]);
+    const result = reconcile({ ledger: buildLedger({ notes: [receiptNote] }), journal });
+    expect(result).toEqual({ matched: [{ kind: 'balance', refs: ['journal:1', 'journal:2'] }], problems: [] });
   });
 
   it('falls back on time for an entry that has no block', () => {

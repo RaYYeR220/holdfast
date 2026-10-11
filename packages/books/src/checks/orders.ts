@@ -2,8 +2,12 @@ import { ZAT_PER_LOT } from '@holdfast/core';
 import type { JournalEntry } from '@holdfast/engine';
 import type { LedgerEntry } from '../entry';
 import { type Findings, journalRef } from '../problems';
+import { perpAsset } from '../sources/hyperliquid';
 
-const isFill = (entry: LedgerEntry) => entry.kind === 'hedge_open' || entry.kind === 'hedge_close';
+/** The one market the controller trades. */
+const HEDGE_ASSET = perpAsset('ZEC');
+
+const isFill = (entry: LedgerEntry) => entry.source === 'hyperliquid' && (entry.kind === 'hedge_open' || entry.kind === 'hedge_close');
 const abs = (n: bigint) => (n < 0n ? -n : n);
 
 /**
@@ -16,6 +20,8 @@ export function checkOrders(journal: readonly JournalEntry[], ledger: readonly L
   const fillsByCloid = new Map<string, LedgerEntry[]>();
   const explained = new Set<LedgerEntry>();
   for (const fill of ledger.filter(isFill)) {
+    // A fill in any other market is not an order of the controller's, whatever id it carries.
+    if (fill.asset !== HEDGE_ASSET) continue;
     const cloid = fill.ref.toLowerCase();
     fillsByCloid.set(cloid, [...(fillsByCloid.get(cloid) ?? []), fill]);
   }
@@ -61,7 +67,12 @@ export function checkOrders(journal: readonly JournalEntry[], ledger: readonly L
 
   for (const fill of ledger.filter(isFill)) {
     if (explained.has(fill)) continue;
-    const label = fill.ref === '' ? 'carries no client order id' : `carries client order id ${fill.ref}, which no journal entry placed`;
+    const label =
+      fill.asset !== HEDGE_ASSET
+        ? `is in ${fill.asset}, a market the controller does not trade`
+        : fill.ref === ''
+          ? 'carries no client order id'
+          : `carries client order id ${fill.ref}, which no journal entry placed`;
     out.error('fill_without_order', `fill ${fill.id} ${label}`, fill.id);
   }
 }

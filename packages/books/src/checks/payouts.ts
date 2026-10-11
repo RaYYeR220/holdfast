@@ -1,8 +1,12 @@
+import { type AssetDirectory, isKnownAsset } from '../assets';
 import type { LedgerEntry } from '../entry';
 import type { OnChainRun, OnChainTransfer, PayoutEvidence } from '../evidence';
 import { entryId, uniqueBy } from '../ids';
+import { priceBook } from '../prices';
 import { type Findings, runRef } from '../problems';
 import { PAYOUT_PAID, type PayoutChain, type PayoutLineRecord, type PayoutRunRecord } from '../records';
+import { payoutEntries } from '../sources/payouts';
+import { differsIn } from './same';
 
 /** Tempo addresses and hashes are hex and compare without case; Solana's are base58 and do not. */
 function sameId(chain: PayoutChain, a: string, b: string): boolean {
@@ -126,21 +130,31 @@ function checkRun({ run, onChain }: PayoutEvidence, out: Findings): void {
   matchLines(run, onChain, out);
 }
 
-/** The ledger must hold exactly the lines of the paid runs, with their amounts, memos and payees. */
-function checkLedger(runs: readonly PayoutRunRecord[], ledger: readonly LedgerEntry[], out: Findings): void {
+/**
+ * The ledger must hold exactly the lines of the paid runs, each as the entry
+ * its line gives: chain, date, token, decimals, amount, memo, payee and
+ * transaction. A token is only what the directory says it is; one the
+ * directory does not know has no decimals or dollar value that can be
+ * confirmed, whatever the entry claims for it.
+ */
+function checkLedger(runs: readonly PayoutRunRecord[], ledger: readonly LedgerEntry[], assets: AssetDirectory, out: Findings): void {
   const entries = new Map(ledger.filter((entry) => entry.kind === 'payout').map((entry) => [entry.id, entry]));
+  const noPrices = priceBook([]);
 
   for (const run of runs) {
     if (run.status !== PAYOUT_PAID) continue;
-    for (const line of run.lines) {
-      const id = entryId.payout(run.id, line.lineNo);
-      const entry = entries.get(id);
-      entries.delete(id);
+    if (!isKnownAsset(run.token, assets)) {
+      out.error('unknown_token', `run ${run.id} pays in ${run.token} on ${run.chain}, a token whose decimals and peg are not known here; its figures cannot be confirmed`, runRef(run.id));
+    }
+    for (const expected of payoutEntries({ runs: [run], assets, prices: noPrices, explorers: {} })) {
+      const entry = entries.get(expected.id);
+      entries.delete(expected.id);
       if (entry === undefined) {
-        out.error('payout_ledger_mismatch', `line ${line.lineNo} of run ${run.id} is paid but is not in the ledger`, id);
-      } else if (entry.amount !== -line.amount || entry.ref !== line.memo || entry.counterparty?.address !== line.toAddress) {
-        out.error('payout_ledger_mismatch', `the ledger entry for line ${line.lineNo} of run ${run.id} differs from the line`, id);
+        out.error('payout_ledger_mismatch', `${expected.id} is a paid line of run ${run.id} and is not in the ledger`, expected.id);
+        continue;
       }
+      const field = differsIn(entry, expected, true);
+      if (field !== null) out.error('payout_ledger_mismatch', `ledger entry ${expected.id} differs from its payout line in its ${field}`, expected.id);
     }
   }
   for (const id of entries.keys()) {
@@ -149,8 +163,8 @@ function checkLedger(runs: readonly PayoutRunRecord[], ledger: readonly LedgerEn
 }
 
 /** Each payout line against exactly one transfer on chain with the same memo, amount and payee. */
-export function checkPayouts(payouts: readonly PayoutEvidence[], ledger: readonly LedgerEntry[], out: Findings): void {
+export function checkPayouts(payouts: readonly PayoutEvidence[], ledger: readonly LedgerEntry[], assets: AssetDirectory, out: Findings): void {
   const evidence = uniqueBy(payouts, (p) => p.run.id);
   for (const item of evidence) checkRun(item, out);
-  checkLedger(evidence.map((p) => p.run), ledger, out);
+  checkLedger(evidence.map((p) => p.run), ledger, assets, out);
 }

@@ -362,6 +362,15 @@ export const floatSwap: SwapRecord = {
   updatedAt: at('2026-10-15T09:19:30Z'),
 };
 
+/** A moment just after the last tick of the made-up month. */
+export const PAYOUTS_NOW = at('2026-11-03T12:04:30Z');
+
+/** The journal goes on ticking through the made-up month, so every later entry falls under a recorded balance. */
+const laterTicks: Tick[] = [
+  { at: at('2026-10-15T09:25:00Z'), treasury: { zat: 151_020_000n, scannedTo: floatChange.height + 12 }, venue: { markPx: 1214.5, shortLots: 1, equity: equityAt(1214.5) + 0.000307 } },
+  { at: at('2026-11-03T12:04:00Z'), treasury: { zat: 151_020_000n, scannedTo: floatChange.height + 21_900 }, venue: { markPx: 1198.2, shortLots: 1, equity: equityAt(1198.2) + 0.000307 } },
+];
+
 /** The real first day, followed by a made-up month: a second grant, a swap into payout float and two payout runs. */
 export function historyWithPayouts(): History {
   const real = realHistory();
@@ -376,7 +385,7 @@ export function historyWithPayouts(): History {
       prices: [...prices, { ts: at('2026-10-14T08:00:00Z'), px: 1210.0 }, { ts: at('2026-10-15T09:00:00Z'), px: 1214.5 }],
       assets: payoutAssets,
     },
-    journal: real.journal,
+    journal: journalOf([...realTicks, ...laterTicks]),
     payouts: payoutEvidence,
   };
 }
