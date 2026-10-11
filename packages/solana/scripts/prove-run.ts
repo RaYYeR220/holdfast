@@ -80,6 +80,7 @@ export async function proveRun(p: Proving): Promise<{ paid: RunInput; marker: Ru
     account: owner.address,
     lines: [...lines, { to: p.newcomer, amount: amount('0.01'), memo: 'one new account too many' }],
     runId: 'HF-2026-10-0009',
+    notBefore: p.since,
   });
   assert.equal(refusedOverAccountLimit.outcome, 'refused');
   assert.match(refusedOverAccountLimit.error ?? '', /^run would create 4 payee token accounts/);

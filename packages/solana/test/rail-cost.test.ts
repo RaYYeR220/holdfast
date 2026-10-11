@@ -181,7 +181,7 @@ describe('the rent rates of the cluster', () => {
 });
 
 describe('preview', () => {
-  const unpaid = { alreadyPaid: false, paidBy: null, historyError: null };
+  const unpaid = { alreadyPaid: false, spent: false, paidBy: null, historyError: null };
 
   it('reports what a run would cost without sending it', async () => {
     await world.openTokenAccount(payee(0));
@@ -209,42 +209,69 @@ describe('preview', () => {
     expect(await preview([])).toMatchObject({ ok: false, error: 'run has no lines' });
   });
 
-  it('points at the transaction that already paid the run', async () => {
+  it('points at the transaction that already paid these lines', async () => {
     const run = [line(0, 1_000n, 'INV-1')];
     const paid = await pay(run);
-    const already = { ok: true, error: null, alreadyPaid: true, paidBy: paid.tx, lineMemos: true, historyError: null };
-    expect(await preview(run)).toEqual({ ...already, cost: costOf(1) });
-    expect(await world.restart().preview({ account: OWNER, lines: run, runId: RUN_ID })).toEqual({ ...already, cost: null });
-    expect(await preview([line(0, 2_000n, 'INV-1')])).toMatchObject({
-      ok: false,
-      alreadyPaid: true,
-      paidBy: paid.tx,
-      error: `run ${RUN_ID} was already paid by ${paid.tx} with different lines`,
+    const already = { ok: true, error: null, alreadyPaid: true, spent: true, paidBy: paid.tx, lineMemos: true };
+    expect(await preview(run)).toEqual({ ...already, cost: costOf(1), historyError: null });
+    expect(await world.restart().preview({ account: OWNER, lines: run, runId: RUN_ID })).toEqual({
+      ...already,
+      cost: null,
+      historyError: null,
     });
   });
 
-  it('says a run is paid on the word of its marker when the payment cannot be read', async () => {
+  it('says of a run id that paid other lines that it is spent, not that these are paid', async () => {
+    const paid = await pay([line(0, 1_000n, 'INV-1')]);
+    expect(await world.restart().preview({ account: OWNER, lines: [line(0, 2_000n, 'INV-1')], runId: RUN_ID })).toEqual({
+      ok: false,
+      error: `run ${RUN_ID} was already paid by ${paid.tx} with different lines`,
+      alreadyPaid: false,
+      spent: true,
+      paidBy: paid.tx,
+      lineMemos: false,
+      cost: null,
+      historyError: null,
+    });
+  });
+
+  it('says of a run id whose payment cannot be read that it is spent, not that these lines are paid', async () => {
     const run = lines(1);
     await pay(run);
     world.node.unreachable.add('getSignaturesForAddress');
     expect(await world.restart().preview({ account: OWNER, lines: run, runId: RUN_ID })).toEqual({
-      ok: true,
-      error: null,
-      alreadyPaid: true,
+      ok: false,
+      error:
+        `run ${RUN_ID} is spent: its marker is set on chain, ` +
+        'but the payment could not be read to compare it with these lines',
+      alreadyPaid: false,
+      spent: true,
       paidBy: null,
       lineMemos: false,
       cost: null,
-      historyError: `run ${RUN_ID} is marked paid on chain, but its payment could not be read: connect ECONNREFUSED`,
+      historyError: 'connect ECONNREFUSED',
     });
   });
 
-  it('goes ahead when the history cannot be read, and says that it was not', async () => {
+  it('turns a run down when the history cannot be read and nothing shows it newer than run markers', async () => {
     world.node.unreachable.add('getSignaturesForAddress');
     expect(await preview(lines(1))).toEqual({
+      ...unpaid,
+      ok: false,
+      error: `could not rule out that run ${RUN_ID} was already paid: connect ECONNREFUSED`,
+      lineMemos: false,
+      cost: null,
+      historyError: 'connect ECONNREFUSED',
+    });
+  });
+
+  it('goes ahead without the history for a run that is newer than run markers, and says that it was not read', async () => {
+    world.node.unreachable.add('getSignaturesForAddress');
+    const rail = world.restart({ markersFrom: 40n });
+    expect(await rail.preview({ account: OWNER, lines: lines(1), runId: RUN_ID, notBefore: 45n })).toEqual({
+      ...unpaid,
       ok: true,
       error: null,
-      alreadyPaid: false,
-      paidBy: null,
       lineMemos: false,
       cost: costOf(1),
       historyError: 'connect ECONNREFUSED',

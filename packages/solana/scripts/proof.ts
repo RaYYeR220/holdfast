@@ -99,6 +99,9 @@ export async function runProof(options: ProofOptions): Promise<ProofReport> {
     );
   }
 
+  // The mint is made below, so nothing was ever paid in it before this slot, and
+  // every payout in it comes from this build and sets a run marker.
+  const since = await rpc.getSlot({ commitment: 'finalized' }).send();
   const mintRent = await rpc.getMinimumBalanceForRentExemption(BigInt(getMintSize())).send();
   const mintSignature = await submit(rpc, owner, [
     getCreateAccountInstruction({
@@ -128,7 +131,7 @@ export async function runProof(options: ProofOptions): Promise<ProofReport> {
     `owner token account ${ownerTokenAccount}`,
   ]);
 
-  const railConfig = { ...node, mint: mint.address, decimals: DECIMALS, delegateSecretKey };
+  const railConfig = { ...node, mint: mint.address, decimals: DECIMALS, delegateSecretKey, markersFrom: since };
   const rail = createSolanaPayoutRail(railConfig);
   const remaining = async (expected: bigint): Promise<bigint> =>
     eventually(async () => (await rail.remaining(owner.address)).remaining, value => value === expected);
@@ -161,6 +164,7 @@ export async function runProof(options: ProofOptions): Promise<ProofReport> {
     mint: mint.address,
     payees: [first, second, third],
     newcomer,
+    since,
     amount,
     show,
     remaining,

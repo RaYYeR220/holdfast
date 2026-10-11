@@ -17,7 +17,7 @@ describe.skipIf(!enabled)('payout rail against a live cluster', () => {
     const { marker } = report;
 
     expect(report.remainingAfterApproval).toBe(10_000_000n);
-    expect(report.priced).toMatchObject({ ok: true, alreadyPaid: false, paidBy: null, lineMemos: true });
+    expect(report.priced).toMatchObject({ ok: true, alreadyPaid: false, spent: false, paidBy: null, lineMemos: true });
     expect(report.priced.cost).toMatchObject({ newTokenAccounts: 3, markerLamports: marker.rent, feeLamports: 5_000n });
     expect(report.refusedOverAccountLimit).toMatchObject({ ok: false, outcome: 'refused', tx: null });
     expect(report.refusedOverAccountLimit.cost?.newTokenAccounts).toBe(4);
@@ -27,7 +27,7 @@ describe.skipIf(!enabled)('payout rail against a live cluster', () => {
     expect(report.allocationUnderOwnBase.error).toBe(
       'instruction 0 failed: custom program error 0x5 (System program: AddressWithSeedMismatch)',
     );
-    expect(report.pricedAfterPrefunding).toMatchObject({ ok: true, alreadyPaid: false });
+    expect(report.pricedAfterPrefunding).toMatchObject({ ok: true, alreadyPaid: false, spent: false });
     expect(report.pricedAfterPrefunding.cost?.markerLamports).toBe(marker.rent - marker.prefunded);
 
     expect(report.payout).toMatchObject({ ok: true, outcome: 'paid', error: null, replayed: false, lineMemos: true });

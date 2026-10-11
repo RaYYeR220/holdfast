@@ -148,9 +148,25 @@ describe('telling a paid run from something that only looks like one', () => {
     expect(fetched).not.toContain(failed.tx);
   });
 
-  it('pays a run when the history cannot be read, and says that it was not', async () => {
+  it('refuses to pay when the history cannot be read and nothing shows that the run is newer than run markers', async () => {
     world.node.unreachable.add('getSignaturesForAddress');
     expect(await pay()).toEqual({
+      ok: false,
+      outcome: 'refused',
+      tx: null,
+      error: `could not rule out that run ${RUN_ID} was already paid: connect ECONNREFUSED; nothing was sent`,
+      replayed: false,
+      lineMemos: false,
+      cost: null,
+      historyError: 'connect ECONNREFUSED',
+    });
+    expect(world.sent).toEqual([]);
+  });
+
+  it('pays such a run when it is newer than run markers, and says that history was not read', async () => {
+    world.node.unreachable.add('getSignaturesForAddress');
+    const rail = world.restart({ markersFrom: 40n });
+    expect(await rail.pay({ account: OWNER, lines: LINES, runId: RUN_ID, notBefore: 45n })).toEqual({
       ok: true,
       outcome: 'paid',
       tx: firstSignature(),

@@ -24,22 +24,26 @@ export interface SolanaPayoutRail extends PayoutRail {
    * transaction, and the chain refuses to set one twice, so a second payout
    * of the same run id cannot go through, from this rail or any other with
    * the same service key. A run that is already paid is answered with the
-   * transaction that paid it, or refused if it was paid with other lines.
-   * Read `outcome`, not only `ok`: an `unknown` run may yet be paid. Never
-   * throws.
+   * transaction that paid it, or refused if it was paid with other lines;
+   * that takes reading the payment, and where it cannot be read the answer
+   * is `unknown`. Read `outcome`, not only `ok`: an `unknown` run may be
+   * paid. Never throws.
    */
   pay(i: RunInput): Promise<SolanaPayoutResult>;
   /**
    * Everything pay() checks before it sends, without sending: whether the
-   * run is already paid, whether it would go ahead, and what it would cost
-   * the service key in rent for new payee token accounts, in rent for its
-   * run marker, and in fees. Never throws.
+   * run id is spent and whether what it paid are these lines, whether the
+   * run would go ahead, and what it would cost the service key in rent for
+   * new payee token accounts, in rent for its run marker, and in fees.
+   * Never throws.
    */
   preview(i: RunInput): Promise<PayoutPreview>;
   /**
    * A slot that is safely in the past. Record it when a run is created and
    * pass it to pay() and findRun() as `notBefore`: the run cannot have been
-   * paid before it, so the search for a payment may stop there.
+   * paid before it, so the search for a payment may stop there. On a rail
+   * that names `markersFrom` it is also what lets a run be sent on the
+   * strength of its missing marker.
    */
   checkpoint(): Promise<bigint>;
   /**
@@ -96,7 +100,16 @@ export function createSolanaPayoutRail(config: SolanaPayoutRailConfig): SolanaPa
         return await runs.preview(i);
       } catch (caught) {
         const error = describeFailure(caught);
-        return { ok: false, error, alreadyPaid: false, paidBy: null, lineMemos: false, cost: null, historyError: null };
+        return {
+          ok: false,
+          error,
+          alreadyPaid: false,
+          spent: false,
+          paidBy: null,
+          lineMemos: false,
+          cost: null,
+          historyError: null,
+        };
       }
     },
 

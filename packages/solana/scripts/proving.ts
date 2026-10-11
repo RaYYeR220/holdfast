@@ -31,6 +31,8 @@ export interface Proving {
   payees: readonly [Address, Address, Address];
   /** An address that never gets a token account. */
   newcomer: Address;
+  /** A slot from before the mint of this proof existed: no run in it is older, and all its payouts set markers. */
+  since: bigint;
   amount(decimal: string): bigint;
   show(units: bigint): string;
   /** remaining() for the owner, polled until it reads `expected`. */

@@ -18,7 +18,9 @@ export interface RunInput {
    * A slot before which this run cannot have been paid, such as the one
    * `checkpoint()` returned when the run was created. It bounds the reading
    * of the paying account's history, which is how a payment is described
-   * and how one made without a run marker is noticed.
+   * and how one made without a run marker is noticed. When it is at or
+   * after the `markersFrom` of the rail, a missing run marker is enough to
+   * send the run; otherwise that history has to prove the run unpaid first.
    */
   notBefore?: bigint;
 }

@@ -40,6 +40,25 @@ export interface SolanaPayoutRailConfig extends RpcSource {
    */
   previousDelegates?: string[];
   /**
+   * The slot from which every payout of this service has set a run marker,
+   * under the present service key or one listed in `previousDelegates`. Only
+   * the operator can know it: a slot `checkpoint()` returned once no build
+   * that pays without markers was running any more, and never an earlier one.
+   *
+   * It decides what a missing marker means. A run whose `notBefore` is at or
+   * after this slot cannot have been paid by the service without a marker,
+   * so a missing marker shows it unpaid, and it is sent even when the history
+   * of the team's account cannot be read to its end. For every other run,
+   * which is every run while this is not set, a missing marker shows nothing
+   * and the run is sent only once history proves it unpaid.
+   *
+   * What the setting leaves out is a payment the team makes by hand under
+   * the run id of such a run. The rail still looks for one among the latest
+   * transactions of the account, but it does not guard against it: findRun()
+   * and reconciliation are where it shows up.
+   */
+  markersFrom?: bigint;
+  /**
    * The most payee token accounts one run may create. The service key pays
    * the rent of each and the payee keeps it, so a run that names many fresh
    * addresses is a way to drain the key. Defaults to 3. Together with the
@@ -63,6 +82,8 @@ export interface RailContext {
   maxNewTokenAccounts: number;
   /** Service keys in use before the present one, whose run markers still count. */
   previousDelegates: readonly Address[];
+  /** The slot from which a missing marker shows that the service has not paid a run; null when no slot was named. */
+  markersFrom: bigint | null;
   /** How a sent transaction is followed until it settles. */
   following: FollowOptions;
   /** The service key, loaded on first use. */
@@ -94,6 +115,8 @@ export function createRailContext(config: SolanaPayoutRailConfig): RailContext {
   if (!Number.isInteger(maxNewTokenAccounts) || maxNewTokenAccounts < 0) {
     throw new RangeError(`invalid maxNewTokenAccountsPerRun ${maxNewTokenAccounts}`);
   }
+  const markersFrom = config.markersFrom ?? null;
+  if (markersFrom !== null && markersFrom < 0n) throw new RangeError(`invalid markersFrom ${markersFrom}`);
   const rpc = connect(config);
   const commitment = config.commitment ?? 'confirmed';
   const pollIntervalMs = config.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
@@ -112,6 +135,7 @@ export function createRailContext(config: SolanaPayoutRailConfig): RailContext {
     pollIntervalMs,
     maxNewTokenAccounts,
     previousDelegates: (config.previousDelegates ?? []).map(delegate => address(delegate)),
+    markersFrom,
     following: {
       commitment,
       pollIntervalMs,

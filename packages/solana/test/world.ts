@@ -72,6 +72,7 @@ type RailOverrides = Partial<
     | 'pollIntervalMs'
     | 'delegateSecretKey'
     | 'previousDelegates'
+    | 'markersFrom'
   >
 >;
 

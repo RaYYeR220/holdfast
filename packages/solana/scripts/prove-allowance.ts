@@ -26,6 +26,7 @@ export async function proveAllowance(p: Proving, allowance: bigint): Promise<All
     account: owner.address,
     lines: [{ to: first, amount: allowance + 1n, memo: 'one base unit too many' }],
     runId: 'HF-2026-10-0002',
+    notBefore: p.since,
   });
   assert.equal(refusedBeforeSending.ok, false);
   assert.equal(refusedBeforeSending.tx, null);
@@ -69,6 +70,7 @@ export async function proveAllowance(p: Proving, allowance: bigint): Promise<All
     account: owner.address,
     lines: [{ to: first, amount: p.amount('0.01'), memo: 'after revoke' }],
     runId: 'HF-2026-10-0003',
+    notBefore: p.since,
   });
   assert.equal(refusedAfterRevoke.ok, false);
   assert.equal(refusedAfterRevoke.tx, null);

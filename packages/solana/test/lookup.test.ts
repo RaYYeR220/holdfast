@@ -27,10 +27,11 @@ import {
 /**
  * What the history of the team's token account can and cannot show.
  *
- * findRun() says a run is unpaid only when the history proves it, and throws
- * in every other case. pay() does not wait for that proof: the run marker
- * decides, and a history that could not be read is named in `historyError`.
- * Each test of a history that proves nothing checks both.
+ * The rail of these tests names no slot from which its payouts carry run
+ * markers, so a missing marker shows nothing here: a run may only be sent
+ * when history proves it unpaid, and findRun() may only call it unpaid then.
+ * Each test of a history that proves nothing checks both. What changes for a
+ * run that cannot be older than the markers is in rail-marker.test.ts.
  */
 
 const RUN_ID = 'HF-2026-10-0001';
@@ -52,22 +53,33 @@ const fetched = (): unknown[] =>
   world.node.calls.filter(call => call.method === 'getTransaction').map(call => call.params[0]);
 const listings = (): number => world.node.methods().filter(method => method === 'getSignaturesForAddress').length;
 
-/** The history cannot rule the run out and no marker is set: findRun will not call it unpaid, and pay() pays it. */
-async function expectUnproven(extras: Extras, reason: RegExp, rail: SolanaPayoutRail = world.rail): Promise<void> {
-  await expect(rail.findRun(OWNER, RUN_ID, extras)).rejects.toThrow(reason);
+/** The history cannot rule the run out and no marker is set: pay() sends nothing, and findRun will not call it unpaid. */
+async function expectRefused(extras: Extras, reason: RegExp, rail: SolanaPayoutRail = world.rail): Promise<void> {
   const result = await pay(extras, rail);
-  expect(result).toMatchObject({ ok: true, outcome: 'paid', replayed: false });
+  expect(result).toMatchObject({ ok: false, outcome: 'refused', tx: null });
+  expect(result.error).toMatch(/^could not rule out that run HF-2026-10-0001 was already paid: /);
+  expect(result.error).toMatch(reason);
+  expect(result.error).toMatch(/; nothing was sent$/);
   expect(result.historyError).toMatch(reason);
-  expect(world.sent).toHaveLength(1);
+  expect(world.sent).toEqual([]);
+  await expect(rail.findRun(OWNER, RUN_ID, extras)).rejects.toThrow(reason);
 }
 
-/** The run is marked paid and its payment cannot be read: findRun throws, and pay() answers from the marker. */
-async function expectPaidUnread(reason: RegExp): Promise<void> {
+/** The run id is spent and its payment cannot be read: findRun throws, and pay() calls the run neither paid nor unpaid. */
+async function expectSpentUnread(reason: RegExp): Promise<void> {
   await expect(world.rail.findRun(OWNER, RUN_ID)).rejects.toThrow(reason);
-  const result = await pay();
-  expect(result).toMatchObject({ ok: true, outcome: 'paid', tx: null, replayed: true });
-  expect(result.historyError).toMatch(/^run HF-2026-10-0001 is marked paid on chain, but its payment could not be read: /);
-  expect(result.historyError).toMatch(reason);
+  expect(await pay()).toEqual({
+    ok: false,
+    outcome: 'unknown',
+    tx: null,
+    error:
+      'run HF-2026-10-0001 is spent: its marker is set on chain, ' +
+      'but the payment could not be read to compare it with these lines; nothing was sent',
+    replayed: true,
+    lineMemos: false,
+    cost: null,
+    historyError: expect.stringMatching(reason),
+  });
   expect(world.sent).toEqual([]);
 }
 
@@ -112,7 +124,7 @@ function fill(count: number): void {
 describe('a history that was not read to its end', () => {
   it('proves nothing when the account has more transactions than the search will list', async () => {
     fill(10_000);
-    await expectUnproven({}, /has more than 10000 transactions; run HF-2026-10-0001 cannot be ruled out/);
+    await expectRefused({}, /has more than 10000 transactions; run HF-2026-10-0001 cannot be ruled out/);
     expect(listings()).toBe(20);
   });
 
@@ -129,18 +141,18 @@ describe('a history that was not read to its end', () => {
       if (config.before) throw new Error('socket hang up');
       return pages(config);
     };
-    await expectUnproven({}, /socket hang up/);
+    await expectRefused({}, /socket hang up/);
   });
 
   it('proves nothing when the listing ends above the creation of the account, as on a node that prunes', async () => {
     await landPayment({ err: { InstructionError: [4, { Custom: 1 }] } });
     world.history.pop();
-    await expectUnproven({}, /does not reach back to its creation; pass notBefore to bound the search/);
+    await expectRefused({}, /does not reach back to its creation; pass notBefore to bound the search/);
   });
 
   it('proves nothing when the node has no history for the account at all', async () => {
     world.history.length = 0;
-    await expectUnproven({}, /the node has no history for /);
+    await expectRefused({}, /the node has no history for /);
   });
 
   it('is complete on a pruning node when the lower bound lies within what the node still has', async () => {
@@ -153,13 +165,13 @@ describe('a history that was not read to its end', () => {
   it('proves nothing when the history of the node begins above the lower bound', async () => {
     world.history.pop();
     world.answers.firstAvailableBlock = () => 46;
-    await expectUnproven({ notBefore: 45n }, /the node's history begins at slot 46, after slot 45/);
+    await expectRefused({ notBefore: 45n }, /the node's history begins at slot 46, after slot 45/);
   });
 
   it('proves nothing when the node cannot say where its history begins', async () => {
     world.history.pop();
     world.node.unreachable.add('getFirstAvailableBlock');
-    await expectUnproven({ notBefore: 45n }, /connect ECONNREFUSED/);
+    await expectRefused({ notBefore: 45n }, /connect ECONNREFUSED/);
   });
 
   it('is not searched from a lower bound that is not a slot', async () => {
@@ -167,7 +179,7 @@ describe('a history that was not read to its end', () => {
     expect(world.sent).toEqual([]);
   });
 
-  it('is read fifty transactions at a time by findRun, which picks up where it left off', async () => {
+  it('is read fifty transactions at a time, each search picking up where the last one left off', async () => {
     const deposit = await depositWire();
     for (let index = 0; index < 51; index++) {
       const slot = FIRST_LANDING_SLOT + index;
@@ -176,47 +188,48 @@ describe('a history that was not read to its end', () => {
         transaction: recorded(deposit, { [world.source]: OWNER }, { slot }),
       });
     }
-    await expect(world.rail.findRun(OWNER, RUN_ID)).rejects.toThrow(
-      /more than 50 transactions of .* would have to be read to rule run .* out; pass notBefore/,
-    );
+    const first = await pay();
+    expect(first).toMatchObject({ ok: false, outcome: 'refused', tx: null });
+    expect(first.error).toMatch(/more than 50 transactions of .* would have to be read to rule run .* out; pass notBefore/);
     expect(fetched()).toHaveLength(50);
+    expect(world.sent).toEqual([]);
 
-    expect(await world.rail.findRun(OWNER, RUN_ID)).toBeNull();
+    expect(await pay()).toMatchObject({ ok: true, outcome: 'paid', historyError: null });
     expect(fetched()).toHaveLength(52);
   });
 });
 
 describe('a payment that is marked on chain but cannot be read', () => {
-  it('is still a payment when the node lists it and returns null for it', async () => {
+  it('is not called a payment of these lines when the node lists it and returns null for it', async () => {
     const { entry } = await landPayment();
     world.answers.transaction = () => null;
-    await expectPaidUnread(new RegExp(`the node lists transaction ${entry.signature} for .* but does not return it`));
+    await expectSpentUnread(new RegExp(`the node lists transaction ${entry.signature} for .* but does not return it`));
   });
 
-  it('is still a payment when the node returns it without its execution record', async () => {
+  it('is not called one when the node returns it without its execution record', async () => {
     const { transaction } = await landPayment();
     world.answers.transaction = () => ({ ...(transaction as object), meta: null });
-    await expectPaidUnread(/but does not return it/);
+    await expectSpentUnread(/but does not return it/);
   });
 
-  it('is still a payment when it cannot be fetched', async () => {
+  it('is not called one when it cannot be fetched', async () => {
     await landPayment();
     world.node.unreachable.add('getTransaction');
-    await expectPaidUnread(/connect ECONNREFUSED/);
+    await expectSpentUnread(/connect ECONNREFUSED/);
   });
 
-  it('is still a payment when it cannot be decoded', async () => {
+  it('is not called one when it cannot be decoded', async () => {
     const { transaction } = await landPayment();
     world.answers.transaction = () => ({ ...(transaction as object), transaction: ['AAAA', 'base64'] });
-    await expectPaidUnread(/could not be decoded/);
+    await expectSpentUnread(/could not be decoded/);
   });
 
-  it('is still a payment when the node kept no token balances for it', async () => {
+  it('is not called one when the node kept no token balances for it', async () => {
     const item = await landPayment();
     const answer = item.transaction as ReturnType<typeof recorded>;
     const { preTokenBalances: _pre, postTokenBalances: _post, ...meta } = answer.meta;
     item.transaction = { ...answer, meta };
-    await expectPaidUnread(/cannot be read from its instructions/);
+    await expectSpentUnread(/cannot be read from its instructions/);
   });
 });
 
@@ -227,7 +240,7 @@ describe('a transaction without a marker that might be a payment', () => {
     expect(world.sent).toHaveLength(1);
   });
 
-  it('does not stop the run when it took tokens out of the account in a way its instructions do not show', async () => {
+  it('stops the run when it took tokens out of the account in a way its instructions do not show', async () => {
     const memoOnly = await signedWire(world.delegate, [
       getAddMemoInstruction({ memo: RUN_ID }, { programAddress: PAYOUT_MEMO_PROGRAM_ADDRESS }),
       getTransferCheckedInstruction({
@@ -246,14 +259,13 @@ describe('a transaction without a marker that might be a payment', () => {
       uiTokenAmount: { ...balance.uiTokenAmount, amount: '996500000' },
     }));
     item.transaction = { ...answer, meta: { ...answer.meta, postTokenBalances: drained } };
-    await expectUnproven({}, /carries run HF-2026-10-0001 as its memo, but what it moved out of .* cannot be read/);
+    await expectRefused({}, /carries run HF-2026-10-0001 as its memo, but what it moved out of .* cannot be read/);
   });
 
-  // History is all that shows a payment made without a marker. Where it cannot be read, that payment goes unseen.
-  it('is not seen when it was a payment by hand that the node will not return, and the run is paid again', async () => {
+  it('stops the run when it was a payment made without a marker that the node will not return', async () => {
     await landPayment({}, { marked: false });
     world.answers.transaction = () => null;
-    await expectUnproven({}, /but does not return it/);
+    await expectRefused({}, /but does not return it/);
   });
 });
 
@@ -365,19 +377,30 @@ describe('commitment', () => {
     expect(world.sent).toEqual([]);
   });
 
-  it('leaves a second payout to the chain when it cannot find out whether the first is finalized', async () => {
+  it('refuses when it cannot find out whether the payment is finalized', async () => {
+    await landUnfinalized();
+    world.node.unreachable.add('getSignatureStatuses');
+    await expectRefused({}, /connect ECONNREFUSED/, finalizing);
+  });
+
+  it('leaves a second payout to the chain when the run cannot be older than the markers', async () => {
     const { entry } = await landUnfinalized();
+    const sinceMarkers = world.restart({ commitment: 'finalized', confirmTimeoutMs: 20, pollIntervalMs: 5, markersFrom: 0n });
     world.node.unreachable.add('getSignatureStatuses');
     world.answers.stalePreflight = () => true;
-    await expect(finalizing.findRun(OWNER, RUN_ID)).rejects.toThrow(/connect ECONNREFUSED/);
 
-    const blind = await pay({}, finalizing);
+    const blind = await pay({ notBefore: 45n }, sinceMarkers);
     expect(blind).toMatchObject({ ok: false, outcome: 'unknown', historyError: 'connect ECONNREFUSED' });
     expect(world.landed.get(blind.tx ?? '')).toEqual({ err: { InstructionError: [2, { Custom: 0 }] } });
 
     world.node.unreachable.clear();
     finalize();
-    expect(await pay({}, finalizing)).toMatchObject({ ok: true, outcome: 'paid', tx: entry.signature, replayed: true });
+    expect(await pay({ notBefore: 45n }, sinceMarkers)).toMatchObject({
+      ok: true,
+      outcome: 'paid',
+      tx: entry.signature,
+      replayed: true,
+    });
     expect([...world.landed.values()].filter(outcome => outcome.err === null)).toHaveLength(1);
   });
 
@@ -386,7 +409,7 @@ describe('commitment', () => {
     const other = await finalizing.pay({ account: OWNER, lines: [{ to: payee(7), amount: 5n, memo: '' }], runId: RUN_ID });
     expect(other).toMatchObject({ ok: false, outcome: 'refused', tx: null });
     expect(other.error).toBe(
-      `run ${RUN_ID} is already on chain as ${entry.signature} with different lines; nothing was sent for these`,
+      `run ${RUN_ID} is already on chain as ${entry.signature} with different lines; nothing was sent`,
     );
   });
 });

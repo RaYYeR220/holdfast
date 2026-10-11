@@ -13,9 +13,18 @@ import { isMarkerSet, MARKER_INSTRUCTION_INDEX, MARKER_TAKEN_ERROR_CODE } from '
 import { isSameRequest, type Payee } from './payees';
 import { payoutInstructions, type PayoutPlan } from './payout';
 import { identifyRun, prepareRun, type RunInput, type RunRequest } from './prepare';
-import { isSameRun, type PaidLine } from './reconcile';
+import type { PaidLine } from './reconcile';
 import { refused, type PayoutPreview, type SolanaPayoutResult } from './results';
 import type { FoundRun } from './search';
+import {
+  answerTaken,
+  previewTaken,
+  standingOfPaid,
+  standingOfPending,
+  standingUnread,
+  type PaidRun,
+  type Standing,
+} from './standing';
 
 /** A transaction that was sent for a run, kept until its fate is known. */
 interface Attempt {
@@ -25,19 +34,12 @@ interface Attempt {
   payees: Payee[];
 }
 
-/** A payment of a run as read from the chain, as far as telling it from another request takes. */
-interface PaidRun {
-  tx: string;
-  transfers: readonly PaidLine[];
-  /** Known only when this rail paid the run itself. */
-  cost: PayoutCost | null;
-}
-
 const REMEMBERED_RUNS = 1_000;
 /**
- * Transactions the history is read for before a run is sent. History only
- * has to catch a payment made without a marker, so a little is spent on it
- * and a crowded history is left unread rather than allowed to hold a run up.
+ * Transactions the history is read for before a run is sent whose missing
+ * marker already shows it unpaid. History then only has to catch a payment
+ * made by hand, so a little is spent on it and a crowded history is left
+ * unread rather than allowed to hold the run up.
  */
 const INSPECTIONS_BEFORE_PAYING = 10;
 
@@ -55,20 +57,29 @@ function foundMarkerTaken(error: CustomError | null): boolean {
   return error !== null && error.index === MARKER_INSTRUCTION_INDEX && error.code === MARKER_TAKEN_ERROR_CODE;
 }
 
+const unproven = (runId: string, reason: string): string =>
+  `could not rule out that run ${runId} was already paid: ${reason}`;
+
 /**
  * Paying runs so that each run id is paid once.
  *
- * The chain enforces that: a payout sets a run marker in the same
- * transaction, and the System program will not set one twice (marker.ts). So
- * a run is paid if its marker is set, and a payout sent for a paid run fails
- * as a whole. Everything else here saves a wasted transaction or describes a
- * payment; none of it is needed for the run to be paid only once.
+ * A payout sets a run marker in the same transaction, and the System
+ * program will not set one twice (marker.ts). What follows from a marker,
+ * and what does not, is the whole of the logic here.
  *
- * History is read for two things a marker cannot give: which transaction
- * paid a run and with what lines, and whether a run was paid without a
- * marker, by the team by hand or by a build that did not set markers yet.
- * Anyone can write to that history, so failing to read it never stops a
- * payment; the result then says so in `historyError`.
+ * - A marker that is set shows that a payout under the run id landed, and
+ *   the chain will let no other land. It does not show what was paid. A run
+ *   is answered as paid only when its payment was read from history and paid
+ *   the lines asked for; read and different, it is refused; unread, the
+ *   answer is `unknown` and nothing is sent.
+ * - A marker that is missing shows that the service has not paid the run
+ *   only if the run cannot be older than the markers: the rail names a slot,
+ *   `markersFrom`, and the run a `notBefore` at or after it. Then history is
+ *   read as far as a few transactions go, and failing to read it does not
+ *   stop the run. Anyone can crowd that history, which is why.
+ * - For any other run a missing marker shows nothing. It may have been paid
+ *   before markers existed, and the run is sent only once history proves
+ *   that it was not.
  */
 export function createRunPayer(context: RailContext) {
   const { rpc, commitment, following } = context;
@@ -77,7 +88,7 @@ export function createRunPayer(context: RailContext) {
   const underway = new Map<string, { payees: Payee[]; result: Promise<SolanaPayoutResult> }>();
   /** Attempts whose outcome was still unknown when pay() returned; the next call follows them first. */
   const unsettled = new Map<string, Attempt>();
-  /** Payments this rail has seen, so that it can describe them again without asking. */
+  /** Payments this rail has made or read, so that it can describe them again without asking. */
   const paidRuns = new Map<string, PaidRun>();
   const keyOf = (request: RunRequest): string => `${request.source}:${request.runId}`;
 
@@ -88,7 +99,11 @@ export function createRunPayer(context: RailContext) {
     return paid;
   }
 
-  /** Whether the run is marked paid under this service key or an earlier one, and what its marker address holds. */
+  /** Whether a missing marker shows that the service has not paid this run; see `markersFrom`. */
+  const markerDecides = ({ notBefore }: RunRequest): boolean =>
+    context.markersFrom !== null && notBefore !== undefined && notBefore >= context.markersFrom;
+
+  /** Whether the run is marked under this service key or an earlier one, and what its marker address holds. */
   async function readMarkers({ marker, earlierMarkers }: RunRequest): Promise<{ set: boolean; lamports: bigint }> {
     const addresses = [marker.address, ...earlierMarkers.map(earlier => earlier.address)];
     const accounts = await fetchEncodedAccounts(rpc, addresses, { commitment });
@@ -108,68 +123,18 @@ export function createRunPayer(context: RailContext) {
     }
   }
 
-  /**
-   * Answer a request for a run whose payment is known: with its transaction,
-   * or with a refusal if the lines differ. `outrun` is a payout this call
-   * sent and the chain turned away, when there was one.
-   */
-  function answerPaid({ runId, payees }: RunRequest, paid: PaidRun, outrun?: string): SolanaPayoutResult {
-    if (!isSameRun(paid.transfers, payees)) {
-      const sent = outrun ? `transaction ${outrun} was sent for these, failed, and moved nothing` : 'nothing was sent';
-      return refused(`run ${runId} was already paid by ${paid.tx} with different lines; ${sent}`);
-    }
-    return {
-      ok: true,
-      outcome: 'paid',
-      tx: paid.tx,
-      error: null,
-      replayed: true,
-      lineMemos: paid.transfers.some(transfer => transfer.memo !== null),
-      cost: paid.cost,
-      historyError: null,
-    };
+  /** How a payment read from history stands to a request. */
+  function standingOfFound(request: RunRequest, found: FoundRun): Standing {
+    if (!found.settled) return standingOfPending(request, found, commitment);
+    const { signature, transfers } = found.run;
+    return standingOfPaid(request, remember(keyOf(request), { tx: signature, transfers, cost: null }));
   }
 
-  /** Answer a request for a run whose payment is on chain but has not settled: neither paid nor unpaid yet. */
-  function answerPending({ runId, payees }: RunRequest, { run }: FoundRun): SolanaPayoutResult {
-    if (!isSameRun(run.transfers, payees)) {
-      const error = `run ${runId} is already on chain as ${run.signature} with different lines; nothing was sent for these`;
-      return refused(error);
-    }
-    return {
-      ok: false,
-      outcome: 'unknown',
-      tx: run.signature,
-      error: `run ${runId} is on chain as ${run.signature} but has not reached ${commitment} yet`,
-      replayed: true,
-      lineMemos: run.transfers.some(transfer => transfer.memo !== null),
-      cost: null,
-      historyError: null,
-    };
-  }
-
-  /**
-   * Answer a request for a run whose marker is set. That it is paid is
-   * settled; history is only asked which transaction paid it.
-   */
-  async function answerMarked(request: RunRequest, outrun?: string): Promise<SolanaPayoutResult> {
-    const { runId, source } = request;
+  /** How a run whose marker is set stands to a request: that takes reading the payout that set it. */
+  async function standingOfMarked(request: RunRequest): Promise<Standing> {
     const history = await readHistory(request);
-    if (history.found) {
-      const { signature, transfers } = history.found.run;
-      return answerPaid(request, remember(keyOf(request), { tx: signature, transfers, cost: null }), outrun);
-    }
-    const reason = history.error ?? `the history of ${source} shows no payment under that run id`;
-    return {
-      ok: true,
-      outcome: 'paid',
-      tx: null,
-      error: null,
-      replayed: true,
-      lineMemos: false,
-      cost: null,
-      historyError: `run ${runId} is marked paid on chain, but its payment could not be read: ${reason}`,
-    };
+    if (history.found) return standingOfFound(request, history.found);
+    return standingUnread(request, history.error ?? `the history of ${request.source} shows no payment under that run id`);
   }
 
   /** Report where an attempt stands, and stop tracking it once that is final. */
@@ -210,7 +175,7 @@ export function createRunPayer(context: RailContext) {
     const outcome = await follow(rpc, earlier.broadcast, following);
     if (outcome.status === 'landed' && foundMarkerTaken(customErrorOf(outcome.err))) {
       unsettled.delete(key);
-      return answerMarked(request);
+      return answerTaken(await standingOfMarked(request));
     }
     if (outcome.status === 'expired' || (outcome.status === 'landed' && outcome.err !== null)) {
       unsettled.delete(key);
@@ -226,23 +191,24 @@ export function createRunPayer(context: RailContext) {
   async function payOnce(request: RunRequest): Promise<SolanaPayoutResult> {
     const key = keyOf(request);
     const remembered = paidRuns.get(key);
-    if (remembered) return answerPaid(request, remembered);
+    if (remembered) return answerTaken(standingOfPaid(request, remembered));
 
     const markers = await readMarkers(request);
     if (markers.set) {
       unsettled.delete(key);
-      return answerMarked(request);
+      return answerTaken(await standingOfMarked(request));
     }
 
     const earlier = unsettled.get(key);
     const settled = earlier ? await settleUnsettled(request, earlier) : null;
     if (settled) return settled;
 
-    const history = await readHistory(request, INSPECTIONS_BEFORE_PAYING);
-    if (history.found) {
-      if (!history.found.settled) return answerPending(request, history.found);
-      const { signature, transfers } = history.found.run;
-      return answerPaid(request, remember(key, { tx: signature, transfers, cost: null }));
+    const decided = markerDecides(request);
+    const history = await readHistory(request, decided ? INSPECTIONS_BEFORE_PAYING : undefined);
+    if (history.found) return answerTaken(standingOfFound(request, history.found));
+    if (history.error !== null && !decided) {
+      const error = `${unproven(request.runId, history.error)}; nothing was sent`;
+      return { ...refused(error), historyError: history.error };
     }
 
     const prepared = await prepareRun(context, request, markers.lamports);
@@ -257,14 +223,15 @@ export function createRunPayer(context: RailContext) {
       outcome = await sendAndConfirm(rpc, attempt.broadcast, { ...following, skipPreflight: false });
     } catch (error) {
       unsettled.delete(key);
-      // The simulation found the marker set: the run was paid between the look above and now.
-      if (foundMarkerTaken(simulatedCustomError(error))) return answerMarked(request);
+      // The simulation found the marker set: a payout of the run landed between the look above and now.
+      if (foundMarkerTaken(simulatedCustomError(error))) return answerTaken(await standingOfMarked(request));
       return { ...refused(describeFailure(error, payoutInstructions(plan)), cost), historyError: history.error };
     }
     if (outcome.status === 'landed' && foundMarkerTaken(customErrorOf(outcome.err))) {
       // Another payout of this run landed first. This one failed as a whole: it moved nothing and cost its fee.
       unsettled.delete(key);
-      return { ...(await answerMarked(request, outcome.signature)), cost: COST_OF_FAILED_TRANSACTION };
+      const answer = answerTaken(await standingOfMarked(request), outcome.signature);
+      return { ...answer, cost: COST_OF_FAILED_TRANSACTION };
     }
     return conclude(key, attempt, outcome, false, history.error);
   }
@@ -295,47 +262,29 @@ export function createRunPayer(context: RailContext) {
 
     async preview(i: RunInput): Promise<PayoutPreview> {
       const request = await identifyRun(context, i);
+      const free = { alreadyPaid: false, spent: false, paidBy: null };
       if (typeof request === 'string') {
-        return { ok: false, error: request, alreadyPaid: false, paidBy: null, lineMemos: false, cost: null, historyError: null };
+        return { ...free, ok: false, error: request, lineMemos: false, cost: null, historyError: null };
       }
       const key = keyOf(request);
-      /** A paid run is only ever turned down for having been paid with other lines. */
-      const paid = (result: SolanaPayoutResult): PayoutPreview => {
-        const paidBy = result.tx ?? paidRuns.get(key)?.tx ?? null;
-        return {
-          ok: result.ok,
-          error: result.ok ? null : `run ${request.runId} was already paid by ${paidBy} with different lines`,
-          alreadyPaid: true,
-          paidBy,
-          lineMemos: result.lineMemos,
-          cost: result.cost,
-          historyError: result.historyError,
-        };
-      };
-
       const remembered = paidRuns.get(key);
-      if (remembered) return paid(answerPaid(request, remembered));
+      if (remembered) return previewTaken(standingOfPaid(request, remembered));
       const markers = await readMarkers(request);
-      if (markers.set) return paid(await answerMarked(request));
+      if (markers.set) return previewTaken(await standingOfMarked(request));
 
-      const history = await readHistory(request, INSPECTIONS_BEFORE_PAYING);
+      const decided = markerDecides(request);
+      const history = await readHistory(request, decided ? INSPECTIONS_BEFORE_PAYING : undefined);
+      if (history.found) return previewTaken(standingOfFound(request, history.found));
       const turnedDown = (error: string, cost: PayoutCost | null): PayoutPreview => ({
+        ...free,
         ok: false,
         error,
-        alreadyPaid: false,
-        paidBy: null,
         lineMemos: false,
         cost,
         historyError: history.error,
       });
-      if (history.found) {
-        if (!history.found.settled) {
-          const pending = answerPending(request, history.found);
-          return { ...turnedDown(pending.error ?? '', null), paidBy: history.found.run.signature };
-        }
-        const { signature, transfers } = history.found.run;
-        return paid(answerPaid(request, remember(key, { tx: signature, transfers, cost: null })));
-      }
+      if (history.error !== null && !decided) return turnedDown(unproven(request.runId, history.error), null);
+
       const earlier = unsettled.get(key);
       if (earlier) {
         const { signature } = earlier.broadcast;
@@ -343,15 +292,8 @@ export function createRunPayer(context: RailContext) {
       }
       const prepared = await prepareRun(context, request, markers.lamports);
       if ('error' in prepared) return turnedDown(prepared.error, prepared.cost);
-      return {
-        ok: true,
-        error: null,
-        alreadyPaid: false,
-        paidBy: null,
-        lineMemos: prepared.plan.lineMemos,
-        cost: prepared.cost,
-        historyError: history.error,
-      };
+      const { plan, cost } = prepared;
+      return { ...free, ok: true, error: null, lineMemos: plan.lineMemos, cost, historyError: history.error };
     },
   };
 }

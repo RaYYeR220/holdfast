@@ -8,12 +8,13 @@ import {
 import { getTransferCheckedInstruction, TOKEN_PROGRAM_ADDRESS } from '@solana-program/token';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { memoInstruction, PAYOUT_MEMO_PROGRAM_ADDRESS } from '../src/payout';
-import type { SolanaPayoutRail } from '../src/rail';
+import { createSolanaPayoutRail, type SolanaPayoutRail } from '../src/rail';
 import { accountInfo, addressOf } from './fake-node';
 import {
   BLOCKHASH,
   createWorld,
   decodeWire,
+  DELEGATE_SEED,
   LATER_BLOCKHASH,
   MARKER_RENT,
   MINT,
@@ -30,15 +31,24 @@ const LINES: PayoutLine[] = [
   { to: payee(1), amount: 2_500_000n, memo: 'INV-1042' },
 ];
 const TAKEN = 'instruction 2 failed: custom program error 0x0 (System program: AccountAlreadyInUse)';
+const SPENT =
+  `run ${RUN_ID} is spent: its marker is set on chain, ` +
+  'but the payment could not be read to compare it with these lines';
+const FEE_ALONE = { newTokenAccounts: 0, rentLamports: 0n, markerLamports: 0n, feeLamports: 5_000n };
+
+/** The slot from which the service of these tests has set a marker with every payout. */
+const MARKERS_FROM = 40n;
+/** When the run of these tests was created: after that slot, so a missing marker shows it unpaid. */
+const CREATED = 45n;
 
 let world: World;
 beforeEach(async () => {
-  world = await createWorld();
+  world = await createWorld({ markersFrom: MARKERS_FROM });
   world.fund({ amount: 100_000_000n, delegate: world.delegate.address, delegatedAmount: 10_000_000n });
 });
 
 const pay = (rail: SolanaPayoutRail = world.rail, lines: PayoutLine[] = LINES) =>
-  rail.pay({ account: OWNER, lines, runId: RUN_ID });
+  rail.pay({ account: OWNER, lines, runId: RUN_ID, notBefore: CREATED });
 const successes = (): number => [...world.landed.values()].filter(outcome => outcome.err === null).length;
 const fetched = (): number => world.node.methods().filter(method => method === 'getTransaction').length;
 
@@ -81,11 +91,12 @@ describe('the run marker', () => {
     expect(await world.isMarked(RUN_ID)).toBe(false);
   });
 
-  it('decides whether a run is paid, where nothing else is known', async () => {
+  it('shows that the run id is spent and not what was paid: with nothing to compare, the answer is unknown', async () => {
     await pay();
     world.history.length = 0;
     const result = await pay(world.restart());
-    expect(result).toMatchObject({ ok: true, outcome: 'paid', replayed: true, tx: null });
+    expect(result).toMatchObject({ ok: false, outcome: 'unknown', tx: null, replayed: true });
+    expect(result.historyError).toBe(`the history of ${world.source} shows no payment under that run id`);
     expect(world.sent).toHaveLength(1);
   });
 
@@ -132,19 +143,37 @@ describe('a second payout of a paid run', () => {
     expect(world.sent).toHaveLength(1);
   });
 
-  it('is answered from the marker when the history cannot be read, and says so', async () => {
+  it('is neither sent again nor called paid when its payment cannot be read to compare', async () => {
     await pay();
     world.node.unreachable.add('getSignaturesForAddress');
     expect(await pay(world.restart())).toEqual({
-      ok: true,
-      outcome: 'paid',
+      ok: false,
+      outcome: 'unknown',
       tx: null,
-      error: null,
+      error: `${SPENT}; nothing was sent`,
       replayed: true,
       lineMemos: false,
       cost: null,
-      historyError: `run ${RUN_ID} is marked paid on chain, but its payment could not be read: connect ECONNREFUSED`,
+      historyError: 'connect ECONNREFUSED',
     });
+    expect(world.sent).toHaveLength(1);
+  });
+
+  it('is answered no differently for other lines while its payment cannot be read', async () => {
+    await pay();
+    world.node.unreachable.add('getSignaturesForAddress');
+    const other = await pay(world.restart(), [{ to: payee(5), amount: 9n, memo: '' }]);
+    expect(other).toMatchObject({ ok: false, outcome: 'unknown', tx: null, error: `${SPENT}; nothing was sent` });
+    expect(world.sent).toHaveLength(1);
+  });
+
+  it('is called paid again as soon as its payment can be read and matches', async () => {
+    const first = await pay();
+    const rail = world.restart();
+    world.node.unreachable.add('getSignaturesForAddress');
+    expect(await pay(rail)).toMatchObject({ outcome: 'unknown' });
+    world.node.unreachable.clear();
+    expect(await pay(rail)).toMatchObject({ ok: true, outcome: 'paid', tx: first.tx, replayed: true });
     expect(world.sent).toHaveLength(1);
   });
 
@@ -181,7 +210,7 @@ describe('two rails that pay the same run at once', () => {
     expect(others).toEqual([]);
     for (const result of results) expect(result).toMatchObject({ ok: true, outcome: 'paid', tx: winner?.tx });
     // The loser's transaction failed as a whole: all it cost is its fee.
-    expect(loser?.cost).toEqual({ newTokenAccounts: 0, rentLamports: 0n, markerLamports: 0n, feeLamports: 5_000n });
+    expect(loser?.cost).toEqual(FEE_ALONE);
   });
 
   it('get one payment between them when they ask for different lines, and the loser is told which', async () => {
@@ -208,14 +237,24 @@ describe('two rails that pay the same run at once', () => {
     expect(new Set(results.map(result => result.tx)).size).toBe(1);
   });
 
-  it('never report the loser as a failure that could be retried', async () => {
+  it('report the loser as unknown, not as paid, when the winner cannot be read to compare', async () => {
     world.answers.stalePreflight = () => true;
     world.node.unreachable.add('getSignaturesForAddress');
     const results = await Promise.all([pay(world.rail), pay(other)]);
-    const loser = results.find(result => result.replayed);
-    expect(loser).toMatchObject({ ok: true, outcome: 'paid', tx: null });
-    expect(loser?.historyError).toMatch(/is marked paid on chain/);
+
     expect(successes()).toBe(1);
+    const [failed] = [...world.landed].filter(([, outcome]) => outcome.err !== null).map(([signature]) => signature);
+    expect(results.filter(result => result.outcome === 'paid')).toHaveLength(1);
+    expect(results.find(result => result.replayed)).toEqual({
+      ok: false,
+      outcome: 'unknown',
+      tx: null,
+      error: `${SPENT}; transaction ${failed} was sent for these, failed, and moved nothing`,
+      replayed: true,
+      lineMemos: false,
+      cost: FEE_ALONE,
+      historyError: 'connect ECONNREFUSED',
+    });
   });
 });
 
@@ -231,8 +270,11 @@ describe('a service key that was rotated', () => {
   });
 
   it('still sees the runs paid under the earlier key when that key is listed', async () => {
-    world.node.unreachable.add('getSignaturesForAddress');
     const rail = world.restart({ delegateSecretKey: laterKey, previousDelegates: [world.delegate.address] });
+    world.node.unreachable.add('getSignaturesForAddress');
+    expect(await pay(rail)).toMatchObject({ ok: false, outcome: 'unknown', error: `${SPENT}; nothing was sent` });
+
+    world.node.unreachable.clear();
     expect(await pay(rail)).toMatchObject({ ok: true, outcome: 'paid', replayed: true });
     expect(world.sent).toHaveLength(1);
   });
@@ -242,12 +284,17 @@ describe('a service key that was rotated', () => {
     expect(await world.isMarked(RUN_ID, laterDelegate)).toBe(false);
     expect(await pay(rail)).toMatchObject({ ok: true, outcome: 'paid', replayed: true });
     expect(world.sent).toHaveLength(1);
+  });
 
+  it('does not pay a run of the earlier, unlisted key again when history cannot be read and nothing bounds the run', async () => {
     world.node.unreachable.add('getSignaturesForAddress');
-    const blind = await pay(world.restart({ delegateSecretKey: laterKey }));
-    expect(blind).toMatchObject({ ok: true, outcome: 'paid', replayed: false });
-    expect(blind.historyError).toBe('connect ECONNREFUSED');
-    expect(world.sent).toHaveLength(2);
+    const rail = world.restart({ delegateSecretKey: laterKey });
+    const blind = await rail.pay({ account: OWNER, lines: LINES, runId: RUN_ID });
+    expect(blind).toMatchObject({ ok: false, outcome: 'refused', tx: null });
+    expect(blind.error).toBe(
+      `could not rule out that run ${RUN_ID} was already paid: connect ECONNREFUSED; nothing was sent`,
+    );
+    expect(world.sent).toHaveLength(1);
   });
 });
 
@@ -287,13 +334,74 @@ describe('a team token account flooded with dust', () => {
     expect(fetched()).toBe(10);
   });
 
-  it('does not make a paid run payable again', async () => {
+  it('does not make a paid run payable again, nor lets it be called paid unread', async () => {
     await pay();
     await flood(60, RUN_ID);
     const again = await pay(world.restart());
-    expect(again).toMatchObject({ ok: true, outcome: 'paid', replayed: true, tx: null });
-    expect(again.historyError).toMatch(/is marked paid on chain, but its payment could not be read/);
+    expect(again).toMatchObject({ ok: false, outcome: 'unknown', replayed: true, tx: null });
+    expect(again.historyError).toMatch(/^more than 50 transactions of .* would have to be read/);
     expect(world.sent).toHaveLength(1);
+  });
+
+  it('does hold up a run that could be older than the markers, which is what naming their slot is for', async () => {
+    await flood(60);
+    const result = await world.rail.pay({ account: OWNER, lines: LINES, runId: RUN_ID });
+    expect(result).toMatchObject({ ok: false, outcome: 'refused', tx: null });
+    expect(result.error).toMatch(/^could not rule out that run .* was already paid: more than 50 transactions of /);
+    expect(world.sent).toEqual([]);
+    expect(fetched()).toBe(50);
+  });
+});
+
+describe('a missing marker', () => {
+  const blind = (rail: SolanaPayoutRail, notBefore?: bigint) => {
+    world.node.unreachable.add('getSignaturesForAddress');
+    return rail.pay({ account: OWNER, lines: LINES, runId: RUN_ID, ...(notBefore === undefined ? {} : { notBefore }) });
+  };
+  const UNPROVEN = `could not rule out that run ${RUN_ID} was already paid: connect ECONNREFUSED; nothing was sent`;
+
+  it('is enough to send a run created at the slot the markers start from, whatever history says', async () => {
+    const result = await blind(world.rail, MARKERS_FROM);
+    expect(result).toMatchObject({ ok: true, outcome: 'paid', replayed: false, historyError: 'connect ECONNREFUSED' });
+    expect(world.sent).toHaveLength(1);
+  });
+
+  it('is not enough for a run created one slot before that', async () => {
+    expect(await blind(world.rail, MARKERS_FROM - 1n)).toEqual({
+      ok: false,
+      outcome: 'refused',
+      tx: null,
+      error: UNPROVEN,
+      replayed: false,
+      lineMemos: false,
+      cost: null,
+      historyError: 'connect ECONNREFUSED',
+    });
+    expect(world.sent).toEqual([]);
+  });
+
+  it('is not enough for a run that does not say when it was created', async () => {
+    expect(await blind(world.rail)).toMatchObject({ ok: false, outcome: 'refused', error: UNPROVEN });
+    expect(world.sent).toEqual([]);
+  });
+
+  it('is not enough on a rail that names no slot the markers start from', async () => {
+    const unnamed = await createWorld();
+    unnamed.fund({ amount: 100_000_000n, delegate: unnamed.delegate.address, delegatedAmount: 10_000_000n });
+    unnamed.node.unreachable.add('getSignaturesForAddress');
+    const result = await unnamed.rail.pay({ account: OWNER, lines: LINES, runId: RUN_ID, notBefore: CREATED });
+    expect(result).toMatchObject({ ok: false, outcome: 'refused', error: UNPROVEN });
+    expect(unnamed.sent).toEqual([]);
+  });
+
+  it('still lets such a run through once history proves it unpaid', async () => {
+    const result = await world.rail.pay({ account: OWNER, lines: LINES, runId: RUN_ID });
+    expect(result).toMatchObject({ ok: true, outcome: 'paid', replayed: false, historyError: null });
+  });
+
+  it('cannot start from a slot that is not one', () => {
+    const config = { rpcUrl: 'http://fake', mint: MINT, decimals: 6, delegateSecretKey: DELEGATE_SEED };
+    expect(() => createSolanaPayoutRail({ ...config, markersFrom: -1n })).toThrow(RangeError);
   });
 });
 
