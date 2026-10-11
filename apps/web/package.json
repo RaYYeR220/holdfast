@@ -1,0 +1,37 @@
+{
+  "name": "@holdfast/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "test": "vitest run",
+    "typecheck": "next typegen && tsc -p tsconfig.json",
+    "typecheck:solana": "tsc -p tsconfig.solana.json",
+    "seed-demo": "tsx scripts/seed-demo.ts"
+  },
+  "dependencies": {
+    "@holdfast/books": "workspace:*",
+    "@holdfast/core": "workspace:*",
+    "@holdfast/db": "workspace:*",
+    "@holdfast/engine": "workspace:*",
+    "@holdfast/hyperliquid": "workspace:*",
+    "@holdfast/intents": "workspace:*",
+    "@holdfast/solana": "workspace:*",
+    "@holdfast/tempo": "workspace:*",
+    "@holdfast/zcash": "workspace:*",
+    "@ledgerhq/zcash-utils": "2.5.1",
+    "jose": "^6.2.12",
+    "next": "^16.4.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "viem": "2.57.4",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0"
+  }
+}
