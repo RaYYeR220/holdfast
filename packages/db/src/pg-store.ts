@@ -1,12 +1,36 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import type { OutgoingPayment, OwnedNote, Policy, Zat } from '@holdfast/core';
 import type { JournalEntry, OrderRecord, OrgState, ScanCommit, Store } from '@holdfast/engine';
-import { type SQL, and, asc, between, desc, eq, getTableColumns, gt, inArray, isNotNull, isNull, lt, not, or, sql } from 'drizzle-orm';
+import { type SQL, and, asc, between, desc, eq, getTableColumns, gt, inArray, isNotNull, isNull, like, lt, lte, ne, not, notInArray, or, sql } from 'drizzle-orm';
 import type { PgColumn, PgTable } from 'drizzle-orm/pg-core';
 import type { Database } from './client';
 import { decryptSecret, encryptSecret } from './crypto';
-import { journal, orders, orgs, zcashFees, zcashNotes, zcashOutgoing } from './schema';
+import {
+  type AuditLinkRow,
+  type KeyKind,
+  MAX_RUNS_PER_MONTH,
+  type NewAuditLink,
+  type NewPayoutLine,
+  type NewPayoutRun,
+  type NewRefusal,
+  type NewServiceKey,
+  type NewSwap,
+  type OrgRecord,
+  type PaidPayoutRun,
+  type PayoutLineRow,
+  type PayoutRunRow,
+  type PayoutSettlement,
+  type PayoutStatus,
+  type RefusalRow,
+  type ServiceKey,
+  type SwapRow,
+  type SwapSighting,
+  runIdOf,
+  runIdPrefix,
+  runNumberOf,
+} from './records';
+import { auditLinks, authNonces, journal, keys, orders, orgs, payoutLines, payoutRuns, refusals, swaps, zcashFees, zcashNotes, zcashOutgoing } from './schema';
 
 export const DEFAULT_LEASE_MS = 120_000;
 const DEFAULT_PAGE = 50;
@@ -53,9 +77,13 @@ export interface NewOrg {
   lockEnabled: boolean;
   monthlyBurnUsd?: number | null;
   publicDemo?: boolean;
+  tempoAccount?: string | null;
+  solanaOwner?: string | null;
 }
 
-export type OrgPatch = Partial<Pick<NewOrg, 'name' | 'hlUser' | 'policy' | 'lockEnabled' | 'monthlyBurnUsd' | 'publicDemo'>>;
+export type OrgPatch = Partial<
+  Pick<NewOrg, 'name' | 'hlUser' | 'policy' | 'lockEnabled' | 'monthlyBurnUsd' | 'publicDemo' | 'tempoAccount' | 'solanaOwner'>
+>;
 
 /** What the application shows about an organisation and the engine has no use for. */
 export interface OrgProfile {
@@ -74,6 +102,12 @@ export interface FeeRecord {
 
 const unknownOrg = (orgId: string) => new Error(`unknown organisation ${orgId}`);
 const ufvkContext = (orgId: string) => `ufvk:${orgId}`;
+const keyContext = (orgId: string, kind: KeyKind, address: string) => `key:${orgId}:${kind}:${address}`;
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** The states in which the swap service is done with a swap. */
+const SETTLED_SWAP_STATES = ['SUCCESS', 'REFUNDED', 'FAILED'];
+const RECEIPT_TOKEN_BYTES = 32;
 
 function* batches<T>(items: readonly T[]): Generator<T[]> {
   for (let i = 0; i < items.length; i += BATCH) yield items.slice(i, i + BATCH);
@@ -116,6 +150,96 @@ const OUTGOING = {
   pool: zcashOutgoing.pool,
 };
 
+// The viewing key and the tick lease are left out: nothing that reads an
+// organisation this way has a use for either.
+const ORG = {
+  id: orgs.id,
+  name: orgs.name,
+  createdAt: orgs.createdAt,
+  hlUser: orgs.hlUser,
+  birthday: orgs.birthday,
+  scannedTo: orgs.scannedTo,
+  policy: orgs.policy,
+  lockEnabled: orgs.lockEnabled,
+  nextSeq: orgs.nextSeq,
+  lastDigest: orgs.lastDigest,
+  monthlyBurnUsd: orgs.monthlyBurnUsd,
+  publicDemo: orgs.publicDemo,
+  tempoAccount: orgs.tempoAccount,
+  solanaOwner: orgs.solanaOwner,
+};
+
+// Without the stored quote, which is evidence and not something to list.
+const SWAP = {
+  id: swaps.id,
+  orgId: swaps.orgId,
+  purpose: swaps.purpose,
+  originAsset: swaps.originAsset,
+  destinationAsset: swaps.destinationAsset,
+  amountIn: swaps.amountIn,
+  minAmountOut: swaps.minAmountOut,
+  amountOut: swaps.amountOut,
+  depositAddress: swaps.depositAddress,
+  recipient: swaps.recipient,
+  state: swaps.state,
+  originTxs: swaps.originTxs,
+  destinationTxs: swaps.destinationTxs,
+  createdAt: swaps.createdAt,
+  updatedAt: swaps.updatedAt,
+};
+
+const RUN = {
+  id: payoutRuns.id,
+  orgId: payoutRuns.orgId,
+  chain: payoutRuns.chain,
+  token: payoutRuns.token,
+  tokenSymbol: payoutRuns.tokenSymbol,
+  tokenDecimals: payoutRuns.tokenDecimals,
+  account: payoutRuns.account,
+  notBefore: payoutRuns.notBefore,
+  status: payoutRuns.status,
+  total: payoutRuns.total,
+  tx: payoutRuns.tx,
+  error: payoutRuns.error,
+  createdAt: payoutRuns.createdAt,
+  executedAt: payoutRuns.executedAt,
+};
+
+const LINE = {
+  runId: payoutLines.runId,
+  lineNo: payoutLines.lineNo,
+  payeeName: payoutLines.payeeName,
+  toAddress: payoutLines.toAddress,
+  amount: payoutLines.amount,
+  memo: payoutLines.memo,
+  reference: payoutLines.reference,
+  tx: payoutLines.tx,
+  logIndex: payoutLines.logIndex,
+  reconciled: payoutLines.reconciled,
+  receiptToken: payoutLines.receiptToken,
+};
+
+const REFUSAL = {
+  id: refusals.id,
+  chain: refusals.chain,
+  kind: refusals.kind,
+  attempted: refusals.attempted,
+  outcome: refusals.outcome,
+  tx: refusals.tx,
+  evidence: refusals.evidence,
+  createdAt: refusals.createdAt,
+};
+
+const AUDIT_LINK = {
+  tokenHash: auditLinks.tokenHash,
+  orgId: auditLinks.orgId,
+  label: auditLinks.label,
+  scope: auditLinks.scope,
+  expiresAt: auditLinks.expiresAt,
+  revokedAt: auditLinks.revokedAt,
+  createdAt: auditLinks.createdAt,
+};
+
 /**
  * The store on Postgres. Every method is a single statement or a single
  * transaction and leaves nothing on the connection, so it works through a
@@ -148,29 +272,39 @@ export class PgStore implements Store {
     return sql`${new Date(this.clockForTests()).toISOString()}::timestamptz`;
   }
 
-  async createOrg(init: NewOrg): Promise<void> {
-    const created = await this.db
-      .insert(orgs)
-      .values({
-        id: init.id,
-        name: init.name,
-        createdAt: this.clockForTests?.(),
-        ufvkEnc: encryptSecret(init.ufvk, this.masterKey, ufvkContext(init.id)),
-        birthday: init.birthday,
-        hlUser: init.hlUser,
-        policy: init.policy,
-        lockEnabled: init.lockEnabled,
-        monthlyBurnUsd: init.monthlyBurnUsd ?? null,
-        publicDemo: init.publicDemo ?? false,
-      })
-      .onConflictDoNothing({ target: orgs.id })
-      .returning({ id: orgs.id });
-    if (created.length === 0) throw new Error(`organisation ${init.id} already exists`);
+  /**
+   * Register an organisation together with the service keys it starts with.
+   * Either all of it is written or none, so that no organisation is left
+   * without the keys the service acts for it with.
+   */
+  async createOrg(init: NewOrg, serviceKeys: readonly NewServiceKey[] = []): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      const created = await tx
+        .insert(orgs)
+        .values({
+          id: init.id,
+          name: init.name,
+          createdAt: this.clockForTests?.(),
+          ufvkEnc: encryptSecret(init.ufvk, this.masterKey, ufvkContext(init.id)),
+          birthday: init.birthday,
+          hlUser: init.hlUser,
+          policy: init.policy,
+          lockEnabled: init.lockEnabled,
+          monthlyBurnUsd: init.monthlyBurnUsd ?? null,
+          publicDemo: init.publicDemo ?? false,
+          tempoAccount: init.tempoAccount ?? null,
+          solanaOwner: init.solanaOwner ?? null,
+        })
+        .onConflictDoNothing({ target: orgs.id })
+        .returning({ id: orgs.id });
+      if (created.length === 0) throw new Error(`organisation ${init.id} already exists`);
+      for (const key of serviceKeys) await this.writeKey(tx, init.id, key);
+    });
   }
 
   async updateOrg(orgId: string, patch: OrgPatch): Promise<void> {
-    const { name, hlUser, policy, lockEnabled, monthlyBurnUsd, publicDemo } = patch;
-    const changes = { name, hlUser, policy, lockEnabled, monthlyBurnUsd, publicDemo };
+    const { name, hlUser, policy, lockEnabled, monthlyBurnUsd, publicDemo, tempoAccount, solanaOwner } = patch;
+    const changes = { name, hlUser, policy, lockEnabled, monthlyBurnUsd, publicDemo, tempoAccount, solanaOwner };
     if (Object.values(changes).every((value) => value === undefined)) return this.requireOrg(orgId);
     const updated = await this.db.update(orgs).set(changes).where(eq(orgs.id, orgId)).returning({ id: orgs.id });
     if (updated.length === 0) throw unknownOrg(orgId);
@@ -194,6 +328,466 @@ export class PgStore implements Store {
       .where(eq(orgs.id, orgId));
     if (row === undefined) throw unknownOrg(orgId);
     return row;
+  }
+
+  /** An organisation without its viewing key, or null when there is none under this id. */
+  async findOrg(orgId: string): Promise<OrgRecord | null> {
+    const [row] = await this.db.select(ORG).from(orgs).where(eq(orgs.id, orgId));
+    return row ?? null;
+  }
+
+  /**
+   * Organisations, oldest first. `owner` is the Hyperliquid account that
+   * controls them; it is hex, so it is compared without regard to case.
+   */
+  async listOrgs(filter: { owner?: string; publicDemo?: boolean } = {}): Promise<OrgRecord[]> {
+    return this.db
+      .select(ORG)
+      .from(orgs)
+      .where(
+        and(
+          filter.owner === undefined ? undefined : eq(sql`lower(${orgs.hlUser})`, filter.owner.toLowerCase()),
+          filter.publicDemo === undefined ? undefined : eq(orgs.publicDemo, filter.publicDemo),
+        ),
+      )
+      .orderBy(asc(orgs.createdAt), asc(orgs.id));
+  }
+
+  /** The time a row is stamped with: the test's when there is one, the database's own otherwise. */
+  private stamp(): number | undefined {
+    return this.clockForTests?.();
+  }
+
+  /** Take the organisation's row for the rest of the transaction, so that what follows happens one at a time for it. */
+  private async lockOrg(tx: Database, orgId: string): Promise<void> {
+    const [org] = await tx.select({ id: orgs.id }).from(orgs).where(eq(orgs.id, orgId)).for('update');
+    if (org === undefined) throw unknownOrg(orgId);
+  }
+
+  private async writeKey(tx: Database, orgId: string, key: NewServiceKey): Promise<boolean> {
+    const sameKind = and(eq(keys.orgId, orgId), eq(keys.kind, key.kind));
+    const [known] = await tx
+      .select({ status: keys.status })
+      .from(keys)
+      .where(and(sameKind, eq(keys.address, key.address)));
+    if (known !== undefined) {
+      if (known.status !== 'active') throw new Error(`the ${key.kind} key ${key.address} of ${orgId} was revoked and cannot be installed again`);
+      return false;
+    }
+    await tx
+      .update(keys)
+      .set({ status: 'revoked', revokedAt: this.clock() })
+      .where(and(sameKind, eq(keys.status, 'active')));
+    await tx.insert(keys).values({
+      orgId,
+      kind: key.kind,
+      address: key.address,
+      secretEnc: encryptSecret(key.secret, this.masterKey, keyContext(orgId, key.kind, key.address)),
+      status: 'active',
+      createdAt: this.stamp(),
+    });
+    return true;
+  }
+
+  /**
+   * Make `key` the organisation's active key of its kind. A key that is
+   * already installed is left alone; another active key of the same kind is
+   * marked revoked. Returns whether anything was written.
+   */
+  async installKey(orgId: string, key: NewServiceKey): Promise<boolean> {
+    return this.db.transaction(async (tx) => {
+      await this.lockOrg(tx, orgId);
+      return this.writeKey(tx, orgId, key);
+    });
+  }
+
+  /** Every key the organisation has or had, newest first. Secrets are not among what is read. */
+  async listKeys(orgId: string): Promise<ServiceKey[]> {
+    const rows = await this.db
+      .select({ kind: keys.kind, address: keys.address, status: keys.status, createdAt: keys.createdAt, revokedAt: keys.revokedAt })
+      .from(keys)
+      .where(eq(keys.orgId, orgId))
+      .orderBy(desc(keys.createdAt), asc(keys.kind), asc(keys.address));
+    return rows.map((row) => ({ ...row, status: row.status === 'active' ? 'active' : 'revoked' }));
+  }
+
+  /** The active key of a kind with its secret decrypted, or null when the organisation has none. */
+  async activeKey(orgId: string, kind: KeyKind): Promise<{ address: string; secret: string } | null> {
+    const [row] = await this.db
+      .select({ address: keys.address, secretEnc: keys.secretEnc })
+      .from(keys)
+      .where(and(eq(keys.orgId, orgId), eq(keys.kind, kind), eq(keys.status, 'active')));
+    if (row === undefined) return null;
+    return { address: row.address, secret: decryptSecret(row.secretEnc, this.masterKey, keyContext(orgId, kind, row.address)) };
+  }
+
+  /**
+   * Keep a sign-in challenge for `ttlMs` by the database's clock, and say when
+   * it runs out. Challenges that already ran out are removed on the way.
+   */
+  async issueNonce(nonce: string, ttlMs: number): Promise<number> {
+    if (!Number.isInteger(ttlMs) || ttlMs <= 0) throw new RangeError('a challenge must last a positive number of milliseconds');
+    await this.db.delete(authNonces).where(lte(authNonces.expiresAt, this.clock()));
+    const [issued] = await this.db
+      .insert(authNonces)
+      .values({
+        nonce,
+        expiresAt: sql`${this.clock()} + ${ttlMs}::double precision * interval '1 millisecond'`,
+        createdAt: this.stamp(),
+      })
+      .returning({ expiresAt: authNonces.expiresAt });
+    if (issued === undefined) throw new Error('the challenge was not stored');
+    return issued.expiresAt;
+  }
+
+  /** Use a challenge up. True only for one that was issued, has not run out and was not used before. */
+  async consumeNonce(nonce: string): Promise<boolean> {
+    const used = await this.db
+      .delete(authNonces)
+      .where(and(eq(authNonces.nonce, nonce), gt(authNonces.expiresAt, this.clock())))
+      .returning({ nonce: authNonces.nonce });
+    return used.length > 0;
+  }
+
+  /**
+   * Record a swap that was quoted. Its deposit address identifies it:
+   * recording the same one again changes nothing and returns the row it has.
+   */
+  async recordSwap(orgId: string, swap: NewSwap): Promise<SwapRow> {
+    const [created] = await this.db
+      .insert(swaps)
+      .values({
+        orgId,
+        purpose: swap.purpose,
+        originAsset: swap.originAsset,
+        destinationAsset: swap.destinationAsset,
+        amountIn: swap.amountIn,
+        minAmountOut: swap.minAmountOut,
+        depositAddress: swap.depositAddress,
+        recipient: swap.recipient,
+        quote: swap.quote,
+        state: swap.state,
+        createdAt: this.stamp(),
+        updatedAt: this.stamp(),
+      })
+      .onConflictDoNothing({ target: swaps.depositAddress })
+      .returning(SWAP);
+    if (created !== undefined) return created;
+    const [existing] = await this.db.select(SWAP).from(swaps).where(eq(swaps.depositAddress, swap.depositAddress));
+    if (existing === undefined || existing.orgId !== orgId) {
+      throw new Error(`deposit address ${swap.depositAddress} already belongs to another swap`);
+    }
+    return existing;
+  }
+
+  async findSwap(orgId: string, swapId: string): Promise<SwapRow | null> {
+    // The id column is a uuid; anything else could not be one of its values.
+    if (!UUID.test(swapId)) return null;
+    const [row] = await this.db
+      .select(SWAP)
+      .from(swaps)
+      .where(and(eq(swaps.orgId, orgId), eq(swaps.id, swapId)));
+    return row ?? null;
+  }
+
+  /** Newest first. */
+  async listSwaps(orgId: string): Promise<SwapRow[]> {
+    return this.db.select(SWAP).from(swaps).where(eq(swaps.orgId, orgId)).orderBy(desc(swaps.createdAt), asc(swaps.id));
+  }
+
+  /**
+   * Write down what the swap service last said about a swap. One that has
+   * settled cannot change any more and is left as it is. Returns the row as
+   * it now stands, or null when the organisation has no such swap.
+   */
+  async updateSwap(orgId: string, swapId: string, seen: SwapSighting): Promise<SwapRow | null> {
+    if (!UUID.test(swapId)) return null;
+    const [updated] = await this.db
+      .update(swaps)
+      .set({
+        state: seen.state,
+        originTxs: seen.originTxs,
+        destinationTxs: seen.destinationTxs,
+        amountOut: seen.amountOut,
+        updatedAt: this.clock(),
+      })
+      .where(and(eq(swaps.orgId, orgId), eq(swaps.id, swapId), notInArray(swaps.state, SETTLED_SWAP_STATES)))
+      .returning(SWAP);
+    return updated ?? this.findSwap(orgId, swapId);
+  }
+
+  /** Swaps of every organisation that can still change state; the one looked at longest ago comes first. */
+  async unsettledSwaps(limit = DEFAULT_PAGE): Promise<SwapRow[]> {
+    return this.db
+      .select(SWAP)
+      .from(swaps)
+      .where(notInArray(swaps.state, SETTLED_SWAP_STATES))
+      .orderBy(asc(swaps.updatedAt), asc(swaps.id))
+      .limit(limit);
+  }
+
+  private async insertRun(
+    tx: Database,
+    orgId: string,
+    run: Pick<PayoutRunRow, 'id' | 'chain' | 'token' | 'tokenSymbol' | 'tokenDecimals' | 'account' | 'notBefore' | 'status' | 'tx' | 'createdAt' | 'executedAt'>,
+    lines: readonly (NewPayoutLine & { tx?: string | null; logIndex?: number | null; reconciled?: boolean })[],
+  ): Promise<void> {
+    if (lines.length === 0) throw new RangeError(`run ${run.id} has no lines`);
+    for (const [index, line] of lines.entries()) {
+      if (line.amount <= 0n) throw new RangeError(`line ${index + 1} of run ${run.id} must pay a positive amount`);
+    }
+    await tx.insert(payoutRuns).values({
+      id: run.id,
+      orgId,
+      chain: run.chain,
+      token: run.token,
+      tokenSymbol: run.tokenSymbol,
+      tokenDecimals: run.tokenDecimals,
+      account: run.account,
+      notBefore: run.notBefore,
+      status: run.status,
+      total: lines.reduce((sum, line) => sum + line.amount, 0n),
+      tx: run.tx,
+      createdAt: run.createdAt,
+      executedAt: run.executedAt,
+    });
+    await tx.insert(payoutLines).values(
+      lines.map((line, index) => ({
+        orgId,
+        runId: run.id,
+        lineNo: index + 1,
+        payeeName: line.payeeName,
+        toAddress: line.toAddress,
+        amount: line.amount,
+        memo: line.memo,
+        reference: line.reference,
+        tx: line.tx ?? null,
+        logIndex: line.logIndex ?? null,
+        reconciled: line.reconciled ?? false,
+        receiptToken: randomBytes(RECEIPT_TOKEN_BYTES).toString('base64url'),
+      })),
+    );
+  }
+
+  /**
+   * Create a draft run under the next id of its month: HF-2026-10-0001,
+   * HF-2026-10-0002 and so on, counted for each organisation on its own.
+   */
+  async createPayoutRun(orgId: string, run: NewPayoutRun): Promise<PayoutRunRow> {
+    const prefix = runIdPrefix(run.at);
+    const id = await this.db.transaction(async (tx) => {
+      await this.lockOrg(tx, orgId);
+      const [last] = await tx
+        .select({ id: payoutRuns.id })
+        .from(payoutRuns)
+        .where(and(eq(payoutRuns.orgId, orgId), like(payoutRuns.id, `${prefix}%`)))
+        .orderBy(desc(payoutRuns.id))
+        .limit(1);
+      const taken = last === undefined ? 0 : runNumberOf(last.id);
+      if (taken === null) throw new Error(`run ${last?.id} of ${orgId} is not numbered, so the next number cannot be told`);
+      if (taken >= MAX_RUNS_PER_MONTH) throw new RangeError(`${orgId} has used every run id of ${prefix.slice(3, -1)}`);
+      const next = runIdOf(run.at, taken + 1);
+      await this.insertRun(
+        tx,
+        orgId,
+        {
+          id: next,
+          chain: run.chain,
+          token: run.token,
+          tokenSymbol: run.tokenSymbol,
+          tokenDecimals: run.tokenDecimals,
+          account: run.account,
+          notBefore: run.notBefore,
+          status: 'draft',
+          tx: null,
+          createdAt: run.at,
+          executedAt: null,
+        },
+        run.lines(next),
+      );
+      return next;
+    });
+    const created = await this.findPayoutRun(orgId, id);
+    if (created === null) throw new Error(`run ${id} of ${orgId} was not stored`);
+    return created;
+  }
+
+  /**
+   * Record a run that was paid before the database knew of it. Returns false,
+   * and writes nothing, when the organisation already has a run under this id.
+   */
+  async importPaidRun(orgId: string, run: PaidPayoutRun): Promise<boolean> {
+    if (runNumberOf(run.id) === null) throw new RangeError(`"${run.id}" is not a run id of the form HF-YYYY-MM-NNNN`);
+    return this.db.transaction(async (tx) => {
+      await this.lockOrg(tx, orgId);
+      const known = await tx
+        .select({ id: payoutRuns.id })
+        .from(payoutRuns)
+        .where(and(eq(payoutRuns.orgId, orgId), eq(payoutRuns.id, run.id)));
+      if (known.length > 0) return false;
+      await this.insertRun(
+        tx,
+        orgId,
+        {
+          id: run.id,
+          chain: run.chain,
+          token: run.token,
+          tokenSymbol: run.tokenSymbol,
+          tokenDecimals: run.tokenDecimals,
+          account: run.account,
+          notBefore: run.notBefore,
+          status: 'paid',
+          tx: run.tx,
+          createdAt: run.createdAt,
+          executedAt: run.executedAt,
+        },
+        run.lines.map((line) => ({ ...line, reconciled: true })),
+      );
+      return true;
+    });
+  }
+
+  private async linesOf(orgId: string, runId?: string): Promise<Map<string, PayoutLineRow[]>> {
+    const rows = await this.db
+      .select(LINE)
+      .from(payoutLines)
+      .where(and(eq(payoutLines.orgId, orgId), runId === undefined ? undefined : eq(payoutLines.runId, runId)))
+      .orderBy(asc(payoutLines.runId), asc(payoutLines.lineNo));
+    const byRun = new Map<string, PayoutLineRow[]>();
+    for (const { runId: owner, ...line } of rows) byRun.set(owner, [...(byRun.get(owner) ?? []), line]);
+    return byRun;
+  }
+
+  async findPayoutRun(orgId: string, runId: string): Promise<PayoutRunRow | null> {
+    const [run] = await this.db
+      .select(RUN)
+      .from(payoutRuns)
+      .where(and(eq(payoutRuns.orgId, orgId), eq(payoutRuns.id, runId)));
+    if (run === undefined) return null;
+    return { ...run, lines: (await this.linesOf(orgId, runId)).get(runId) ?? [] };
+  }
+
+  /** Newest first. */
+  async listPayoutRuns(orgId: string): Promise<PayoutRunRow[]> {
+    const runs = await this.db.select(RUN).from(payoutRuns).where(eq(payoutRuns.orgId, orgId)).orderBy(desc(payoutRuns.createdAt), desc(payoutRuns.id));
+    const lines = await this.linesOf(orgId);
+    return runs.map((run) => ({ ...run, lines: lines.get(run.id) ?? [] }));
+  }
+
+  /**
+   * Mark a run as being sent and say what it was before. A run that is paid
+   * stays paid. Null when the organisation has no such run.
+   */
+  async beginPayoutRun(orgId: string, runId: string): Promise<PayoutStatus | null> {
+    return this.db.transaction(async (tx) => {
+      const which = and(eq(payoutRuns.orgId, orgId), eq(payoutRuns.id, runId));
+      const [run] = await tx.select({ status: payoutRuns.status }).from(payoutRuns).where(which).for('update');
+      if (run === undefined) return null;
+      if (run.status !== 'paid') await tx.update(payoutRuns).set({ status: 'sending' }).where(which);
+      return run.status;
+    });
+  }
+
+  /**
+   * Write down how an attempt to pay a run ended. A run recorded as paid is
+   * not changed to anything else: an attempt that ended otherwise is not the
+   * one that paid it. Returns the run as it now stands.
+   */
+  async settlePayoutRun(orgId: string, runId: string, outcome: PayoutSettlement): Promise<PayoutRunRow | null> {
+    await this.db.transaction(async (tx) => {
+      const settled = await tx
+        .update(payoutRuns)
+        .set({ status: outcome.status, tx: outcome.tx, error: outcome.error, executedAt: outcome.executedAt })
+        .where(and(eq(payoutRuns.orgId, orgId), eq(payoutRuns.id, runId), outcome.status === 'paid' ? undefined : ne(payoutRuns.status, 'paid')))
+        .returning({ id: payoutRuns.id });
+      if (settled.length === 0) return;
+      for (const line of outcome.lines ?? []) {
+        await tx
+          .update(payoutLines)
+          .set({ tx: line.tx, logIndex: line.logIndex, reconciled: line.reconciled })
+          .where(and(eq(payoutLines.orgId, orgId), eq(payoutLines.runId, runId), eq(payoutLines.lineNo, line.lineNo)));
+      }
+    });
+    return this.findPayoutRun(orgId, runId);
+  }
+
+  /** The line a receipt token stands for, with its run; null for a token that was never given out. */
+  async findReceipt(token: string): Promise<{ run: Omit<PayoutRunRow, 'lines'>; line: PayoutLineRow } | null> {
+    const [found] = await this.db
+      .select({ run: RUN, line: LINE })
+      .from(payoutLines)
+      .innerJoin(payoutRuns, and(eq(payoutRuns.orgId, payoutLines.orgId), eq(payoutRuns.id, payoutLines.runId)))
+      .where(eq(payoutLines.receiptToken, token));
+    if (found === undefined) return null;
+    const { runId: _run, ...line } = found.line;
+    return { run: found.run, line };
+  }
+
+  /**
+   * Keep the evidence of a refusal. One transaction is one refusal: recording
+   * it a second time writes nothing and returns null.
+   */
+  async recordRefusal(orgId: string, refusal: NewRefusal): Promise<RefusalRow | null> {
+    const [row] = await this.db
+      .insert(refusals)
+      .values({
+        orgId,
+        chain: refusal.chain,
+        kind: refusal.kind,
+        attempted: refusal.attempted,
+        outcome: refusal.outcome,
+        tx: refusal.tx,
+        evidence: refusal.evidence,
+        createdAt: this.stamp(),
+      })
+      .onConflictDoNothing({ target: [refusals.orgId, refusals.tx] })
+      .returning(REFUSAL);
+    return row ?? null;
+  }
+
+  /** Newest first. */
+  async listRefusals(orgId: string, limit = DEFAULT_PAGE): Promise<RefusalRow[]> {
+    return this.db.select(REFUSAL).from(refusals).where(eq(refusals.orgId, orgId)).orderBy(desc(refusals.createdAt), asc(refusals.id)).limit(limit);
+  }
+
+  async createAuditLink(orgId: string, link: NewAuditLink): Promise<AuditLinkRow> {
+    const [row] = await this.db
+      .insert(auditLinks)
+      .values({ orgId, tokenHash: link.tokenHash, label: link.label, scope: link.scope, expiresAt: link.expiresAt, createdAt: this.stamp() })
+      .returning(AUDIT_LINK);
+    if (row === undefined) throw new Error('the auditor link was not stored');
+    return row;
+  }
+
+  /** Newest first; revoked and expired links are listed too. */
+  async listAuditLinks(orgId: string): Promise<AuditLinkRow[]> {
+    return this.db.select(AUDIT_LINK).from(auditLinks).where(eq(auditLinks.orgId, orgId)).orderBy(desc(auditLinks.createdAt), asc(auditLinks.tokenHash));
+  }
+
+  /**
+   * Take a link away, from this moment by the database's clock. Returns the
+   * link as it now stands, or null when the organisation has no such link.
+   * Revoking one that is already revoked leaves its first revocation in place.
+   */
+  async revokeAuditLink(orgId: string, tokenHash: string): Promise<AuditLinkRow | null> {
+    const which = and(eq(auditLinks.orgId, orgId), eq(auditLinks.tokenHash, tokenHash));
+    const [revoked] = await this.db
+      .update(auditLinks)
+      .set({ revokedAt: this.clock() })
+      .where(and(which, isNull(auditLinks.revokedAt)))
+      .returning(AUDIT_LINK);
+    if (revoked !== undefined) return revoked;
+    const [existing] = await this.db.select(AUDIT_LINK).from(auditLinks).where(which);
+    return existing ?? null;
+  }
+
+  /** The link a token hash stands for, unless it was revoked or has run out by the database's clock. */
+  async liveAuditLink(tokenHash: string): Promise<AuditLinkRow | null> {
+    const [row] = await this.db
+      .select(AUDIT_LINK)
+      .from(auditLinks)
+      .where(and(eq(auditLinks.tokenHash, tokenHash), isNull(auditLinks.revokedAt), or(isNull(auditLinks.expiresAt), gt(auditLinks.expiresAt, this.clock()))));
+    return row ?? null;
   }
 
   /**

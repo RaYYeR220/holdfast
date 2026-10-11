@@ -15,6 +15,13 @@
       "when": 1791665729426,
       "tag": "0001_lease_token",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791685868443,
+      "tag": "0002_application",
+      "breakpoints": true
     }
   ]
 }

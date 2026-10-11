@@ -24,6 +24,11 @@ export const holdfast = pgSchema('holdfast');
 const ZERO_ROOT: Hex = `0x${'00'.repeat(32)}`;
 
 export const KEY_KINDS = ['hl_agent', 'tempo_access', 'tempo_sponsor', 'solana_delegate'] as const;
+/**
+ * A kind has one active key. A revoked one is no longer used by the service;
+ * whether its chain still honours it is for the chain to say.
+ */
+export const KEY_STATUSES = ['active', 'revoked'] as const;
 export const SWAP_PURPOSES = ['margin', 'payout_float', 'unlock'] as const;
 export const PAYOUT_CHAINS = ['tempo', 'solana'] as const;
 export const PAYOUT_STATUSES = ['draft', 'approved', 'sending', 'paid', 'failed', 'refused'] as const;
@@ -52,6 +57,10 @@ export const orgs = holdfast
       tickLeaseToken: uuid('tick_lease_token'),
       monthlyBurnUsd: doublePrecision('monthly_burn_usd'),
       publicDemo: boolean('public_demo').notNull().default(false),
+      /** The account payouts on Tempo are made from; its root authorizes the access key. */
+      tempoAccount: text('tempo_account'),
+      /** The wallet payouts on Solana are made from; it approves the delegate. */
+      solanaOwner: text('solana_owner'),
     },
     (t) => [check('orgs_tip_is_whole', sql`(${t.tipHeight} is null) = (${t.tipSince} is null)`)],
   )
@@ -221,13 +230,20 @@ export const payoutRuns = holdfast
   .table(
     'payout_runs',
     {
-      /** Human-readable and carried on chain, e.g. HF-2026-10-0001. */
-      id: text('id').primaryKey(),
+      /** Human-readable, numbered per organisation and carried on chain, e.g. HF-2026-10-0001. */
+      id: text('id').notNull(),
       orgId: text('org_id')
         .notNull()
         .references(() => orgs.id),
       chain: text('chain', { enum: PAYOUT_CHAINS }).notNull(),
       token: text('token').notNull(),
+      /** The account the run pays from, as the organisation had it when the run was created. */
+      account: text('account'),
+      /** Solana only: a slot before which the run cannot have been paid. */
+      notBefore: baseUnits('not_before'),
+      /** What the token was called and how many decimals it had when the run was created. */
+      tokenSymbol: text('token_symbol'),
+      tokenDecimals: integer('token_decimals'),
       status: text('status', { enum: PAYOUT_STATUSES }).notNull(),
       total: baseUnits('total').notNull(),
       tx: text('tx'),
@@ -237,6 +253,7 @@ export const payoutRuns = holdfast
       executedAt: epochMs('executed_at'),
     },
     (t) => [
+      primaryKey({ columns: [t.orgId, t.id] }),
       index('payout_runs_org_idx').on(t.orgId, t.createdAt),
       check('payout_runs_chain_is_known', sql`${t.chain} in (${oneOf(PAYOUT_CHAINS)})`),
       check('payout_runs_status_is_known', sql`${t.status} in (${oneOf(PAYOUT_STATUSES)})`),
@@ -248,19 +265,26 @@ export const payoutLines = holdfast
   .table(
     'payout_lines',
     {
-      runId: text('run_id')
-        .notNull()
-        .references(() => payoutRuns.id),
+      orgId: text('org_id').notNull(),
+      runId: text('run_id').notNull(),
       lineNo: integer('line_no').notNull(),
       payeeName: freeText('payee_name').notNull(),
       toAddress: text('to_address').notNull(),
       amount: baseUnits('amount').notNull(),
+      /** What the transfer carries on chain. */
       memo: freeText('memo').notNull(),
+      /** The payee's own reference, such as an invoice number, where the chain's memo cannot carry it. */
+      reference: freeText('reference').notNull().default(''),
       tx: text('tx'),
       logIndex: integer('log_index'),
       reconciled: boolean('reconciled').notNull().default(false),
+      /** Whoever holds it may read the public receipt of this line. */
+      receiptToken: text('receipt_token').unique(),
     },
-    (t) => [primaryKey({ columns: [t.runId, t.lineNo] })],
+    (t) => [
+      primaryKey({ columns: [t.orgId, t.runId, t.lineNo] }),
+      foreignKey({ columns: [t.orgId, t.runId], foreignColumns: [payoutRuns.orgId, payoutRuns.id] }),
+    ],
   )
   .enableRLS();
 
@@ -281,7 +305,7 @@ export const refusals = holdfast
       evidence: json('evidence').notNull(),
       createdAt: epochMs('created_at').notNull().default(sql`now()`),
     },
-    (t) => [index('refusals_org_idx').on(t.orgId, t.createdAt)],
+    (t) => [index('refusals_org_idx').on(t.orgId, t.createdAt), unique('refusals_tx_key').on(t.orgId, t.tx)],
   )
   .enableRLS();
 
@@ -302,4 +326,13 @@ export const auditLinks = holdfast
     },
     (t) => [index('audit_links_org_idx').on(t.orgId)],
   )
+  .enableRLS();
+
+/** Sign-in challenges that were issued and not used yet. One is deleted the moment it is used. */
+export const authNonces = holdfast
+  .table('auth_nonces', {
+    nonce: text('nonce').primaryKey(),
+    expiresAt: epochMs('expires_at').notNull(),
+    createdAt: epochMs('created_at').notNull().default(sql`now()`),
+  })
   .enableRLS();
