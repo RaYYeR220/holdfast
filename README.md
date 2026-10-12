@@ -26,7 +26,7 @@ The demo organisation is a real treasury of a few dollars on mainnet. A schedule
 | Zcash | Unified full viewing key | Read payments in, their memos, the balance, and what the treasury itself sent | Spend, or sign anything | The Zcash protocol: a viewing key carries no authority to spend | None to show: the key has nothing to sign with. The read is in [PROOF 1](docs/PROOF.md#1-zcash-a-shielded-payment-read-with-a-viewing-key) |
 | Hyperliquid | Agent key, approved once by the team's account | Place and cancel orders on the team's account, and switch its account mode | Withdraw or transfer the team's funds | Hyperliquid: a withdrawal or transfer acts on the account of whoever signed it, and the agent's own account is empty | A withdrawal and a transfer signed by the agent, both answered `Must deposit before performing actions`. This is the exchange's answer, not a transaction: [PROOF 3](docs/PROOF.md#3-hyperliquid-the-lock-and-the-agent-key-failing-to-withdraw) |
 | Tempo | Access key with an expiry, a spending limit per period and a call scope | Call `transferWithMemo` on one stablecoin, to the recipients it lists when it lists any, up to the limit of the current period | Spend more, call any other function or token, pay after expiry or revocation | Tempo's Account Keychain, on every transaction the key signs | Two reverted transactions, `SpendingLimitExceeded` and `CallNotAllowed`, and a revocation: [PROOF 4](docs/PROOF.md#4-tempo-payroll-through-a-key-with-a-limit) |
-| Solana | Token delegate on the team's USDC account, with a fixed allowance | Transfer up to the allowance out of that one token account | Exceed the allowance, move anything after the team revokes it, pay the same run twice | The SPL Token program for the allowance; the System program for the run marker | Two failed transactions, Token program errors `0x1` and `0x4`: [PROOF 5](docs/PROOF.md#5-solana-contractor-payouts-through-a-delegate-with-an-allowance). The run marker is shown on devnet only |
+| Solana | Token delegate on the team's USDC account, with a fixed allowance | Transfer up to the allowance out of that one token account | Exceed the allowance, move anything after the team revokes it, pay the same run twice | The SPL Token program for the allowance; the System program for the run marker | Two failed transactions, Token program errors `0x1` and `0x4`: [PROOF 5](docs/PROOF.md#5-solana-contractor-payouts-through-a-delegate-with-an-allowance). A run marker is set on mainnet; the chain failing a second payment is shown on devnet |
 
 Fees are paid apart from the team's money. On Tempo a separate sponsor account, the service's own, pays the fee of every payout, so the access key's limit is spent on payouts alone. On Solana the delegate key itself pays the fee, the rent of a run marker and the rent of at most three new payee token accounts per run, out of SOL the service gives it; it holds no USDC.
 
@@ -247,10 +247,9 @@ Two further limits. The service reads everything the viewing key shows, so whoev
 
 Not built yet:
 
-- The Solana run marker has not been used on mainnet. The mainnet payout run predates it; the marker is shown on devnet.
+- No second payment of a Solana run has been sent on mainnet. Run `HF-2026-10-0004` set its marker there; the chain failing a repeat is shown on devnet.
 - `holdfast verify` does not read Tempo, Solana or the swap service, and does not compare the journal with the root on HyperEVM.
 - Swaps deliver to the team's Hyperliquid account and Solana wallet. Funding the Tempo account from ZEC inside the application is not built.
-- The safety view cannot read which agents a Hyperliquid account has approved, and reports that scope as unavailable.
 
 ## Licence
 

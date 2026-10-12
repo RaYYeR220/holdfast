@@ -37,6 +37,7 @@ The devnet and Moderato transactions below come from the proof scripts in `packa
 | The Solana delegate pays up to a fixed allowance from the team's USDC account | Mainnet | [PROOF 5](PROOF.md#5-solana-contractor-payouts-through-a-delegate-with-an-allowance): approval `2F3FFe43…`, payout `4kLtT81s…` |
 | A transfer above the allowance is refused by the Token program | Mainnet | Error `0x1`: [`5UpRY36z…wQiZq99`](https://solscan.io/tx/5UpRY36zNFBVJo6VwRsCUJmnEQbvxs2R1xCZzmSU2RNGBLSUALwWeHPPSH3MKK8ZroXEY3MsuiSaquoZjwQiZq99) |
 | After the team revokes, the delegate can move nothing | Mainnet | Error `0x4`: [`FjduxHjy…xrsrYVg`](https://solscan.io/tx/FjduxHjy1bqB1Nc4i6QbKkyUgEwEXMVsVmM4z3CFpYiJFfY8gsSaQ3t5azzDrB8czwHamboSwirDqN37xrsrYVg) |
+| A payout run paid from the application sets its run marker, and paying it again sends nothing | Mainnet | Run `HF-2026-10-0004`: [`bw7ag5Pw…rfXs6d2H`](https://solscan.io/tx/bw7ag5PwuhKxPHWXKUS4khouTrtVbPBzXi8rW5svaYg4uxxKudaqqoMG1DPeAgr34Sr5BkwnBmpzczYrfXs6d2H); [PROOF 5](PROOF.md#5-solana-contractor-payouts-through-a-delegate-with-an-allowance) |
 | The chain refuses a second payout of the same Solana run | Testnet | Devnet: [`57dG5ufC…Q1M2ge7`](https://explorer.solana.com/tx/57dG5ufCgC4d44FvjCPUwPmJ4yKKPxWxTsWq1Y1CEr2bFoVk8YFYWkcG1dtc7QkPRkNtWRMPBHSppbrU3Q1M2ge7?cluster=devnet), System program error `0x0`. `packages/solana/test/rail-marker.test.ts`. Not on mainnet: the mainnet run predates the marker, and its repeat was stopped by reading the account's history |
 | Of two payouts of one run sent at the same moment, one lands and the other fails | Testnet | Devnet: [`B8Rmuxnc…vpsjhco`](https://explorer.solana.com/tx/B8Rmuxncuv88PKmd1YzXRqyBqRDKkaJDWCk4CooNiTT7f5DsGyjsdog8x7E39JoCsHZ6c9ZTRETa9qHhvpsjhco?cluster=devnet) and [`2fVzejdi…DvHZTd8M`](https://explorer.solana.com/tx/2fVzejdiioLd4MpeJDdMhb3PsYMH4jFytsNtdbQ6bq47cbasG58qWVurt42Kz5GdUVwmjSG58XQapFf1DvHZTd8M?cluster=devnet) |
 | A Solana run creates at most three new payee token accounts | Test | `packages/solana/test/rail-cost.test.ts` |
@@ -124,7 +125,6 @@ The devnet and Moderato transactions below come from the proof scripts in `packa
 | No users besides our own demo organisation, no revenue, no audit, no token | Nothing to show; none exists |
 | The amounts in the demo are a few dollars | [PROOF](PROOF.md): 0.01975 ZEC in, 11.02 USDC of margin, two payout runs of 0.75 USDC |
 | Not a custodian | The four keys above, and the refusals |
-| The Solana run marker has not been used on mainnet | [PROOF 5](PROOF.md#5-solana-contractor-payouts-through-a-delegate-with-an-allowance) |
+| No second payment of a Solana run has been sent on mainnet; the marker of `HF-2026-10-0004` is set there | [PROOF 5](PROOF.md#5-solana-contractor-payouts-through-a-delegate-with-an-allowance) |
 | Top-up requests and the buy-back ladder have not fired on mainnet | The demo's journal as of 12 October 2026: one order, and every other decision a hold with no request to the treasurer |
 | Funding the Tempo account from ZEC inside the application is not built | `apps/web/src/server/funding/service.ts`: swaps deliver to Hyperliquid and Solana |
-| The safety view cannot read which agents a Hyperliquid account has approved | [/api/demo/demo/safety](https://holdfast-iota.vercel.app/api/demo/demo/safety) reports that scope as unavailable |

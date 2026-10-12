@@ -64,6 +64,8 @@ Must deposit before performing actions. User: 0x677811d01c4250c2e3677a85b430a82f
 
 The address in the answer is the agent's, not the team's. A withdrawal or transfer acts on the account of whoever signed it; signed by the agent it reaches for the agent's own account, which is empty, and never for the team's. The agent key can place and cancel orders on the team's account and switch its account mode; it cannot take funds out of it. `probeWithdrawRefusal` in `packages/hyperliquid` repeats the attempt.
 
+The same two attempts were made again on 12 October from the application's Safety page, by the owner. The exchange gave the same answer to both, and the page keeps them word for word under "What the keys were refused".
+
 ## 4. Tempo: payroll through a key with a limit
 
 The team's account authorized an access key for the service: 2.00 USDC per 30 days, `transferWithMemo` on USDC.e only, two recipients, expiry in 30 days. A separate sponsor key pays the fees, so the fee never touches the limit.
@@ -80,6 +82,8 @@ The team's account authorized an access key for the service: 2.00 USDC per 30 da
 
 After both refusals the remaining limit was still 1.25 and the outside address had received nothing.
 
+A second run was paid from the application by its owner on 12 October: `HF-2026-10-0005`, 0.20 and 0.15 USDC.e to the two listed recipients, in [`0xfe4caef4…b7fd1850`](https://explore.tempo.xyz/tx/0xfe4caef4b0b56838e32056a74d9330334d8e7c9a6d20fc95b6d4ce4bb7fd1850). The key then had 0.90 USDC.e left in its period.
+
 ## 5. Solana: contractor payouts through a delegate with an allowance
 
 The team's wallet approved the service key as delegate for 1.50 USDC on its token account. The service key pays the fees and the rent of new payee accounts; it holds no USDC.
@@ -94,7 +98,14 @@ The team's wallet approved the service key as delegate for 1.50 USDC on its toke
 | The former delegate tries to move one base unit | failed on chain: Token program error `0x4` | [`FjduxHjy…xrsrYVg`](https://solscan.io/tx/FjduxHjy1bqB1Nc4i6QbKkyUgEwEXMVsVmM4z3CFpYiJFfY8gsSaQ3t5azzDrB8czwHamboSwirDqN37xrsrYVg) |
 | The wallet approves the delegate again, for 0.75 USDC, so the demo treasury can go on paying | allowance 0.75 | [`9X2xYNdb…UgHHA3Jw`](https://solscan.io/tx/9X2xYNdbPvmi1KvKPrsH8k8fsCGN7LQyDD6bS12aQH9seM7a355LYpVZfCvgkkdtGZTPuLXXdVYjeUpUgHHA3Jw) |
 
-This run was paid before payout runs carried a marker. The marker, a System account that makes the chain itself refuse a second payment of the same run, is shown on devnet in [PROOF-solana-devnet.md](PROOF-solana-devnet.md) with a transaction for each property, including two payments of one run sent at the same moment.
+Run `HF-2026-10-0003` was paid before payout runs carried a marker. The next one was paid from the application, by its owner, on 12 October, and set one:
+
+| Step | Result | Transaction |
+|---|---|---|
+| The owner drafts run `HF-2026-10-0004` in the application (0.10 and 0.15 USDC) and pays it from the run's page | paid in one transaction, which also allocates the run's marker, the System account [`Dpx4fw29…72vnjSG`](https://solscan.io/account/Dpx4fw29aqHdyvfMLAsNJ46zp3jxKUozqUiAc72vnjSG); allowance 0.50 left | [`bw7ag5Pw…rfXs6d2H`](https://solscan.io/tx/bw7ag5PwuhKxPHWXKUS4khouTrtVbPBzXi8rW5svaYg4uxxKudaqqoMG1DPeAgr34Sr5BkwnBmpzczYrfXs6d2H), slot 456,182,009 |
+| The owner executes the paid run again from the same page | nothing sent: the application answers "This run was already paid; nothing was sent" with the first transaction | |
+
+The marker is a System account that makes the chain itself refuse a second payment of the same run. No second payment was sent on mainnet; the chain failing one is shown on devnet in [PROOF-solana-devnet.md](PROOF-solana-devnet.md) with a transaction for each property, including two payments of one run sent at the same moment.
 
 ## 6. The controller's journal
 

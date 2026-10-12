@@ -120,7 +120,7 @@ Solana.
 - For a run from before that slot, and for every run while the setting is empty, a missing marker shows nothing. The run is sent only once the account's history proves it unpaid.
 - What `markersFrom` leaves out is a payment the team made by hand under the same run id. The rail looks for one among the latest transactions and does not guard against it.
 - A run marker is derived from the key that paid. After a key rotation the old key has to be listed, and listing it takes its word: whoever holds an old key can set the marker of a run that was never paid.
-- The run marker is shown on devnet. On mainnet the one payout run was paid before markers existed.
+- On mainnet one run has set its marker. The chain failing a second payment of a run is shown on devnet only.
 - The rail treats any JSON-RPC error answer to `sendTransaction` as proof that nothing was broadcast, and reports the run as refused. A node that answered with an error after passing the transaction on would make that report wrong: the run could be paid while the service says it was refused. The run marker keeps this from becoming a second payment, and reading the run from the chain corrects the record.
 
 HedgeAttestor.
