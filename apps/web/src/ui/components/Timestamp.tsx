@@ -17,6 +17,14 @@ export interface TimestampProps {
   className?: string;
 }
 
+/** How far a moment may lie ahead of the clock and still be a reading taken just now: the clock ticks every 15 seconds. */
+const TICK_SLACK_MS = 60_000;
+
+/** The clock to measure `at` against: a reading a moment newer than the last tick is not in the future. */
+function reference(at: number, clock: number): number {
+  return at > clock && at - clock <= TICK_SLACK_MS ? at : clock;
+}
+
 /**
  * A moment, absolute and relative: `2026-10-12 14:03 UTC, 3 min ago`. Every
  * figure read from a chain or a venue is shown with one of these.
@@ -24,12 +32,14 @@ export interface TimestampProps {
 export function Timestamp({ at, now, show = 'both', seconds = false, className }: TimestampProps) {
   const [clock, setClock] = useState<number | undefined>(now);
   useEffect(() => {
-    setClock(Date.now());
-    const timer = window.setInterval(() => setClock(Date.now()), 15_000);
+    // A page read again brings a later server clock; neither clock is allowed to run behind the other.
+    const read = () => setClock(Math.max(Date.now(), now ?? 0));
+    read();
+    const timer = window.setInterval(read, 15_000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [now]);
   const absolute = formatUtc(at, seconds);
-  const relative = clock === undefined ? null : formatAgo(at, clock);
+  const relative = clock === undefined ? null : formatAgo(at, reference(at, Math.max(clock, now ?? 0)));
   return (
     <time className={`hf-time${className === undefined ? '' : ` ${className}`}`} dateTime={new Date(at).toISOString()} title={absolute}>
       {show !== 'relative' && (

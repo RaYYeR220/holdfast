@@ -193,6 +193,29 @@
   max-width: 1200px;
 }
 
+/*
+ * Wide screens get the same layout drawn larger, not a column with an empty
+ * margin beside it. Each step keeps the 4px design pixel on whole device
+ * pixels: 5, 6 and 7.
+ */
+@media (min-width: 1800px) {
+  .hf-shell {
+    zoom: 1.25;
+  }
+}
+
+@media (min-width: 2160px) {
+  .hf-shell {
+    zoom: 1.5;
+  }
+}
+
+@media (min-width: 2520px) {
+  .hf-shell {
+    zoom: 1.75;
+  }
+}
+
 .hf-shell__banner {
   margin-bottom: var(--s8);
 }

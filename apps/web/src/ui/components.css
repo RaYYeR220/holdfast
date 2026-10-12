@@ -492,6 +492,8 @@
    DataTable
 ------------------------------------------------------------------- */
 .hf-table-wrap {
+  /* Holds what is positioned inside a cell, such as text for screen readers, within the scrolling box. */
+  position: relative;
   overflow-x: auto;
   max-width: 100%;
 }
@@ -614,7 +616,7 @@
 
 .hf-kv dd {
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 
 .hf-kv--stack {
