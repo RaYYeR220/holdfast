@@ -1,0 +1,195 @@
+/*
+ * A receipt: one sheet of paper on the ink ground, with no shell around it.
+ * It is read on a phone as often as on a desk.
+ */
+.rc {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: var(--s12) var(--gutter) var(--s18);
+}
+
+.rc__column {
+  width: 100%;
+  max-width: 624px;
+}
+
+.rc__mark {
+  margin-bottom: var(--s5);
+}
+
+.rc__mark a {
+  font: var(--px-2) var(--f-px);
+  font-weight: 420;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+  color: var(--paper);
+  text-decoration: none;
+  padding: 4px 8px 4px 4px;
+  margin-left: -4px;
+}
+
+.rc__mark a:hover {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.rc__sheet {
+  padding: var(--s8) var(--s8) var(--s10);
+}
+
+/* The four tones, stepping from the paper of the sheet down to the ink of the page. */
+.rc__edge > i {
+  display: block;
+  height: 8px;
+}
+
+.rc__foot {
+  margin-top: var(--s5);
+  font: var(--tx-s) var(--f-text);
+  font-style: italic;
+  max-width: 34em;
+}
+
+.rc__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2) var(--s4);
+  flex-wrap: wrap;
+  padding-bottom: var(--s4);
+  border-bottom: var(--rule) solid var(--fg);
+}
+
+.rc__kicker {
+  font: var(--px-1) var(--f-px);
+  font-weight: 420;
+}
+
+/* The one heading of the page: who paid, the amount, and where. */
+.rc__title {
+  margin-top: var(--s6);
+  font-weight: 400;
+}
+
+.rc__payer,
+.rc__where {
+  display: block;
+  font: var(--tx-l) var(--f-text);
+}
+
+.rc__payer b {
+  font-weight: 400;
+  font-style: italic;
+}
+
+.rc__amount {
+  display: block;
+  font: var(--px-5) var(--f-px);
+  font-weight: 420;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+  margin: var(--s2) 0 var(--s2) -4px;
+  overflow-wrap: anywhere;
+}
+
+.rc__unit {
+  font: var(--px-2) var(--f-px);
+  font-weight: 420;
+  margin-left: var(--s3);
+  white-space: nowrap;
+}
+
+.rc__facts {
+  margin-top: var(--s6);
+  border-top: var(--rule-thin) solid var(--fg);
+  border-bottom: var(--rule-thin) solid var(--fg);
+}
+
+.rc__facts dd {
+  font: var(--tx-m) var(--f-text);
+}
+
+.rc__whole {
+  font: var(--num-s) var(--f-num);
+  overflow-wrap: anywhere;
+}
+
+.rc__copy {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s1) var(--s3);
+  max-width: 100%;
+}
+
+.rc__check {
+  margin-top: var(--s6);
+}
+
+.rc__check h2 {
+  font: var(--px-1) var(--f-px);
+  font-weight: 420;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+  margin-bottom: var(--s2);
+}
+
+.rc__check p + p {
+  margin-top: var(--s2);
+}
+
+/* The page that says there is no receipt. */
+.rc__none {
+  font: var(--px-3) var(--f-px);
+  font-weight: 420;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+  margin: var(--s6) 0 var(--s3) -2px;
+}
+
+.rc__sheet > p + p {
+  margin-top: var(--s3);
+}
+
+@media (max-width: 760px) {
+  .rc {
+    align-content: start;
+    padding: var(--s6) var(--gutter) var(--s12);
+  }
+
+  .rc__sheet {
+    padding: var(--s5) var(--s4) var(--s6);
+  }
+
+  .rc__amount {
+    font: var(--px-4) var(--f-px);
+    font-weight: 420;
+  }
+
+  .rc__payer,
+  .rc__where {
+    font: var(--tx-m) var(--f-text);
+  }
+
+  .rc__none {
+    font: var(--px-2) var(--f-px);
+    font-weight: 420;
+  }
+}
+
+@media (max-width: 420px) {
+  .rc__amount {
+    font: var(--px-3) var(--f-px);
+    font-weight: 420;
+    margin-left: -2px;
+  }
+
+  .rc__unit {
+    font: var(--px-1) var(--f-px);
+    font-weight: 420;
+    margin-left: var(--s2);
+  }
+}

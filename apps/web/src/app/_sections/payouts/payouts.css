@@ -1,0 +1,657 @@
+/*
+ * The Payouts section: the two rails, the ledger of runs, a run's page and
+ * the owner's forms. Everything else on these pages is a primitive.
+ */
+
+/* ---------- the two rails ---------- */
+.po-rails {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s6);
+  align-items: start;
+}
+
+.po-rail > .hf-panel__body > * + *,
+.po-rail__rest > * + * {
+  margin-top: var(--s5);
+}
+
+/*
+ * Side by side, the two rails share their rows: head, plate, first thing to
+ * read, and the rest. Each row is as tall as the taller of the two, so the
+ * facts of both start level and both panels end level.
+ */
+@media (min-width: 1280px) {
+  .po-rails {
+    row-gap: 0;
+  }
+
+  .po-rail {
+    display: grid;
+    grid-template-rows: subgrid;
+    grid-row: span 4;
+  }
+
+  .po-rail > .hf-panel__body {
+    display: grid;
+    grid-template-rows: subgrid;
+    grid-row: span 3;
+  }
+
+  /* Each part keeps its own height at the top of its row. */
+  .po-rail > .hf-panel__body > * {
+    align-self: start;
+    min-width: 0;
+  }
+}
+
+/* The key on its plate, and under it the first thing to read. */
+.po-rail__plate {
+  height: 128px;
+}
+
+.po-rail__key {
+  position: absolute;
+  inset: 0;
+}
+
+
+.po-rail__lead .hf-stat__figure {
+  white-space: normal;
+}
+
+.po-verdict__title {
+  font: var(--px-2) var(--f-px);
+  font-weight: 420;
+}
+
+.po-verdict__body {
+  margin-top: var(--s2);
+  max-width: 34em;
+}
+
+.po-verdict__body > * + * {
+  margin-top: var(--s2);
+}
+
+.po-asof {
+  font-style: italic;
+}
+
+.po-bullets {
+  list-style: square;
+  padding-left: var(--s6);
+}
+
+.po-bullets li {
+  overflow-wrap: anywhere;
+}
+
+/* A fact and, under it, the sentence that says what it means. */
+.po-facts dd {
+  font: var(--tx-m) var(--f-text);
+}
+
+.po-fact__note {
+  display: block;
+  font: var(--tx-s) var(--f-text);
+  font-style: italic;
+  margin-top: 2px;
+}
+
+.po-fact__asof {
+  font: var(--tx-s) var(--f-text);
+  font-style: italic;
+  white-space: nowrap;
+}
+
+.po-address {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  max-width: 100%;
+  min-width: 0;
+  vertical-align: baseline;
+}
+
+.po-address--whole {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.po-address--whole .hf-num {
+  overflow-wrap: anywhere;
+}
+
+.po-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+
+.po-code {
+  font: var(--num-m) var(--f-num);
+}
+
+.po-moment {
+  white-space: nowrap;
+}
+
+.po-when {
+  display: inline-flex;
+  flex-direction: column;
+}
+
+.po-when__rel {
+  font: var(--tx-s) var(--f-text);
+  font-style: italic;
+}
+
+/* What cannot be done from this page, and who can do it. */
+.po-readonly {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  column-gap: var(--s3);
+  align-items: start;
+  font: var(--tx-s) var(--f-text);
+  max-width: 44em;
+}
+
+.po-rail .po-readonly {
+  padding-top: var(--s4);
+  border-top: var(--rule-thin) solid var(--fg);
+  max-width: none;
+}
+
+.po-readonly .hf-swatch {
+  margin-top: 3px;
+}
+
+.po-readonly b {
+  font: var(--px-1) var(--f-px);
+  font-weight: 420;
+  margin-right: var(--s1);
+}
+
+/* ---------- the ledger of runs, and of a run's lines ---------- */
+.po-runs > .hf-heading {
+  margin-bottom: 0;
+}
+
+.po-runs > * + * {
+  margin-top: var(--s5);
+}
+
+.po-runs > .hf-heading + .po-ledger {
+  margin-top: 0;
+}
+
+.po-empty {
+  font: var(--tx-l) var(--f-text);
+  max-width: 34em;
+}
+
+.po-ledger__head,
+.po-ledger__row {
+  display: grid;
+  grid-template-columns: var(--po-columns);
+  column-gap: var(--s5);
+  align-items: baseline;
+}
+
+.po-ledger__head {
+  padding: 10px 0;
+  border-bottom: var(--rule) solid var(--fg);
+  font: var(--px-1) var(--f-px);
+  font-weight: 420;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+}
+
+.po-ledger__row {
+  padding: var(--s3) 0 14px;
+  background: linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 100% / 8px 2px repeat-x;
+}
+
+.po-ledger [role='rowgroup']:last-child .po-ledger__row:last-child {
+  background: none;
+  border-bottom: var(--rule-thin) solid var(--fg);
+}
+
+.po-ledger__cell {
+  min-width: 0;
+}
+
+.po-ledger__value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.po-ledger__label {
+  display: none;
+  font: var(--px-1) var(--f-px);
+  font-weight: 420;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+}
+
+.po-ledger__num {
+  text-align: right;
+}
+
+.po-ledger__num .po-ledger__value {
+  font: var(--num-m) var(--f-num);
+  font-variant-numeric: tabular-nums;
+}
+
+.po-unit {
+  font: var(--px-1) var(--f-px);
+  font-weight: 420;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+  margin-left: 2px;
+}
+
+.po-runid,
+.po-lineno {
+  font: var(--px-1) var(--f-px);
+  font-weight: 420;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+  white-space: nowrap;
+}
+
+/* Where the ledger is a table, the column says "Line"; where a row is a block, the row says it. */
+.po-lineno__word {
+  display: none;
+}
+
+.po-quiet {
+  font: var(--tx-s) var(--f-text);
+  font-style: italic;
+}
+
+/* ---------- a run's page ---------- */
+.po-crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2) var(--s3);
+  align-items: baseline;
+  font: var(--px-1) var(--f-px);
+  font-weight: 420;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+}
+
+.po-run {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: var(--s6);
+  align-items: start;
+}
+
+.po-run__error {
+  margin-top: var(--s5);
+}
+
+.po-run__error p {
+  overflow-wrap: anywhere;
+}
+
+.po-marker {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s1) var(--s4);
+}
+
+.po-payee {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.po-receipt {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s1) var(--s3);
+}
+
+.po-sum {
+  display: flex;
+  justify-content: flex-end;
+  align-items: baseline;
+  gap: var(--s4);
+  margin-top: var(--s3);
+}
+
+.po-sum .hf-px {
+  font-size: 20px;
+  line-height: 24px;
+}
+
+.po-note {
+  font: var(--tx-s) var(--f-text);
+  margin-top: var(--s3);
+}
+
+.po-chain > * + * {
+  margin-top: var(--s3);
+}
+
+/* ---------- the owner's actions on a rail ---------- */
+.po-actions {
+  border-top: var(--rule) solid var(--fg);
+}
+
+.po-action {
+  padding: var(--s5) 0 var(--s2);
+}
+
+.po-action + .po-action {
+  border-top: var(--rule-thin) solid var(--fg);
+}
+
+.po-action > * + * {
+  margin-top: var(--s4);
+}
+
+.po-action__title {
+  font: var(--px-1) var(--f-px);
+  font-weight: 500;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+}
+
+/* A button with, beside it, the sentence that says what pressing it does. */
+.po-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s3) var(--s5);
+}
+
+.po-row > .hf-small {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.po-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--s5) var(--s5);
+  align-items: start;
+}
+
+.po-form__wide {
+  grid-column: 1 / -1;
+}
+
+.po-form--one {
+  grid-template-columns: minmax(0, 28em);
+}
+
+.po-waiting {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  column-gap: var(--s3);
+  align-items: start;
+  font: var(--tx-s) var(--f-text);
+}
+
+.po-waiting .hf-skeleton {
+  margin-top: 1px;
+}
+
+.po-told p {
+  overflow-wrap: anywhere;
+}
+
+.po-strong {
+  font: var(--px-1) var(--f-px);
+  font-weight: 420;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+  margin-right: var(--s1);
+}
+
+/* The sentence that says what an approval allows, set apart before the wallet is opened. */
+.po-pledge {
+  font: var(--tx-l) var(--f-text);
+  padding: var(--s3) var(--s4);
+  border: var(--rule) solid var(--fg);
+}
+
+/* ---------- a new run ---------- */
+.po-new > .hf-panel__body > * + * {
+  margin-top: var(--s5);
+}
+
+.po-new__rail {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: var(--s4) var(--s8);
+  align-items: end;
+}
+
+.po-new__standing .hf-px {
+  font-size: 20px;
+  line-height: 24px;
+  font-weight: 420;
+  margin-right: var(--s1);
+}
+
+.po-new__lines {
+  border-top: var(--rule) solid var(--fg);
+}
+
+.po-new__line {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) minmax(0, 2.4fr) minmax(0, 0.7fr) minmax(0, 1fr) 72px;
+  column-gap: var(--s4);
+  align-items: start;
+  padding: var(--s4) 0 var(--s5);
+  background: linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 100% / 8px 2px repeat-x;
+}
+
+.po-new__no {
+  font-size: 20px;
+  line-height: 24px;
+  font-weight: 420;
+  padding-top: 40px;
+}
+
+.po-new__remove {
+  padding-top: 40px;
+}
+
+.po-new__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3) var(--s6);
+}
+
+.po-new__total .hf-px {
+  font-size: 20px;
+  line-height: 24px;
+  font-weight: 420;
+}
+
+.po-new__total .hf-num {
+  font: var(--num-m) var(--f-num);
+  margin: 0 var(--s2);
+}
+
+/* Where the lines stand as a table, the first line names the columns and the others do not repeat them. */
+@media (min-width: 1100px) {
+  .po-new__line + .po-new__line .hf-field__label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .po-new__line + .po-new__line .po-new__no,
+  .po-new__line + .po-new__line .po-new__remove {
+    padding-top: var(--s3);
+  }
+}
+
+/* ---------- what paying a run would do ---------- */
+.po-preview > * + * {
+  margin-top: var(--s5);
+}
+
+/* ---------- 1279 and below: one rail under the other; a ledger row becomes a block ---------- */
+@media (max-width: 1279px) {
+  .po-rails,
+  .po-run {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .po-ledger__head {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .po-ledger {
+    border-top: var(--rule) solid var(--fg);
+  }
+
+  .po-ledger__row {
+    grid-template-columns: repeat(auto-fit, minmax(144px, 1fr));
+    row-gap: var(--s3);
+    padding: var(--s4) 0 18px;
+  }
+
+  .po-ledger__name,
+  .po-ledger__wide {
+    grid-column: 1 / -1;
+  }
+
+  .po-ledger__label {
+    display: block;
+    margin-bottom: 2px;
+  }
+
+  .po-ledger__name .po-ledger__label {
+    display: none;
+  }
+
+  .po-ledger__num {
+    text-align: left;
+  }
+
+  .po-lineno__word {
+    display: inline;
+  }
+
+  .po-sum {
+    justify-content: flex-start;
+  }
+}
+
+@media (min-width: 761px) and (max-width: 1279px) {
+  /* Room for two values side by side again: a wide value shares its line. */
+  .po-ledger__wide {
+    grid-column: span 2;
+  }
+}
+
+@media (max-width: 1099px) {
+  /* A line of a new run becomes a block: the address takes a line of its own. */
+  .po-new__line {
+    grid-template-columns: 32px minmax(0, 1fr) minmax(0, 1fr) auto;
+    row-gap: var(--s4);
+  }
+
+  .po-new__line > .hf-field:nth-of-type(2) {
+    grid-column: 2 / 4;
+    grid-row: 2;
+  }
+
+  .po-new__line > .hf-field:nth-of-type(3) {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .po-new__line > .hf-field:nth-of-type(4) {
+    grid-column: 2 / 4;
+    grid-row: 3;
+  }
+
+  .po-new__remove {
+    grid-column: 4;
+    grid-row: 1;
+  }
+
+  .po-new__rail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 760px) {
+  .po-new__line {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .po-new__no {
+    grid-column: 1;
+    grid-row: 1;
+    padding-top: 0;
+  }
+
+  .po-new__remove {
+    grid-column: 2;
+    grid-row: 1;
+    padding-top: 0;
+  }
+
+  .po-new__line > .hf-field:nth-of-type(n) {
+    grid-column: 1 / -1;
+    grid-row: auto;
+  }
+
+  .po-pledge {
+    font: var(--tx-m) var(--f-text);
+  }
+
+  .po-rail__plate {
+    height: 104px;
+  }
+
+  .po-rail__lead .hf-stat--large .hf-stat__figure,
+  .po-run .hf-stat--large .hf-stat__figure {
+    font: var(--px-3) var(--f-px);
+    font-weight: 420;
+    margin-left: -2px;
+  }
+
+  .po-verdict__title {
+    font: var(--px-1) var(--f-px);
+    font-weight: 420;
+  }
+
+  .po-empty {
+    font: var(--tx-m) var(--f-text);
+  }
+}
+
+/* ---------- while a page is being read ---------- */
+.po-loading {
+  font: var(--tx-s) var(--f-text);
+  font-style: italic;
+}
+
+.po-rail .po-loading {
+  margin-top: var(--s3);
+}
