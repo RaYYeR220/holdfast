@@ -1,0 +1,227 @@
+/* Signing in, registering, and the owner's overview. Everything not named here is a primitive. */
+
+/* The pixel face keeps whole pixels only at multiples of 10px. */
+.en .hf-px,
+.en-signin .hf-px,
+.en-register .hf-px,
+.en-flow .hf-px,
+.en-wallet .hf-px {
+  font-size: 20px;
+  line-height: 24px;
+}
+
+.en-asof {
+  font-style: italic;
+}
+
+.en-break {
+  overflow-wrap: anywhere;
+}
+
+/* ---------- signing in and registering ---------- */
+.en-signin,
+.en-register {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  column-gap: var(--s10);
+  row-gap: var(--s8);
+  align-items: start;
+}
+
+.en-flow > * + *,
+.en-wallet > * + * {
+  margin-top: var(--s4);
+}
+
+.en-lead {
+  font: var(--tx-l) var(--f-text);
+}
+
+.en-wallet__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s3) var(--s4);
+}
+
+.en-wallet__icon {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  margin-right: 10px;
+  vertical-align: -4px;
+  image-rendering: pixelated;
+}
+
+.en-wallet__line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s1) var(--s2);
+}
+
+.en-wallet__line .hf-btn {
+  margin-left: var(--s3);
+}
+
+/* What is about to be signed, set apart from the button that signs it. */
+.en-terms {
+  border: var(--rule-thin) solid var(--fg);
+  padding: var(--s3) var(--s4) var(--s1);
+}
+
+.en-terms > .hf-px {
+  font-weight: 500;
+  margin-bottom: var(--s1);
+}
+
+.en-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s3) var(--s6);
+}
+
+.en-actions > p {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
+.en-aside {
+  padding-top: var(--s3);
+}
+
+.en-aside h2 {
+  font-weight: 500;
+  margin-bottom: var(--s2);
+}
+
+.en-aside ul + h2 {
+  margin-top: var(--s8);
+}
+
+.en-lines li {
+  padding: var(--s2) 0 10px var(--s5);
+  background:
+    linear-gradient(var(--fg), var(--fg)) 0 18px / 8px 4px no-repeat,
+    linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 100% / 8px 2px repeat-x;
+}
+
+.en-lines li:last-child {
+  background: linear-gradient(var(--fg), var(--fg)) 0 18px / 8px 4px no-repeat;
+}
+
+.en-birthday {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  column-gap: var(--s6);
+  row-gap: var(--s3);
+  align-items: end;
+}
+
+.en-tip > * + * {
+  margin-top: var(--s2);
+}
+
+/* A table that scrolls sideways holds what it scrolls, hidden text of its copy buttons included. */
+.en-keys.hf-table-wrap {
+  position: relative;
+}
+
+/* ---------- advisories ---------- */
+.en-advice__title {
+  font-weight: 500;
+  margin-bottom: var(--s3);
+}
+
+.en-advice__list > li + li {
+  margin-top: var(--s4);
+}
+
+.en-advice__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2) var(--s5);
+}
+
+/* ---------- the setup checklist ---------- */
+.en-check__lead {
+  max-width: 56em;
+  margin-bottom: var(--s2);
+}
+
+.en-step {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) max-content;
+  column-gap: var(--s4);
+  align-items: start;
+  padding: var(--s3) 0;
+  background: linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 100% / 8px 2px repeat-x;
+}
+
+.en-step:last-child {
+  background: none;
+  padding-bottom: 0;
+}
+
+/* The number of a step: a solid plate once the step is done, an outline while it is not. */
+.en-step__no {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  box-shadow: inset 0 0 0 4px var(--fg);
+}
+
+.en-step[data-state='done'] .en-step__no {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+.en-step[data-state='unknown'] .en-step__no {
+  box-shadow: none;
+  background:
+    linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 0 / 8px 4px repeat-x,
+    linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 100% / 8px 4px repeat-x,
+    linear-gradient(0deg, var(--fg) 50%, #0000 0) 0 0 / 4px 8px repeat-y,
+    linear-gradient(0deg, var(--fg) 50%, #0000 0) 100% 0 / 4px 8px repeat-y;
+}
+
+.en-step__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1) var(--s4);
+  margin-bottom: 2px;
+}
+
+.en-step__title {
+  font-weight: 500;
+}
+
+.en-step__link {
+  padding-top: var(--s1);
+  white-space: nowrap;
+}
+
+@media (max-width: 1279px) {
+  .en-signin,
+  .en-register {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 760px) {
+  .en-step {
+    grid-template-columns: 40px minmax(0, 1fr);
+  }
+
+  .en-step__link {
+    grid-column: 2;
+    white-space: normal;
+  }
+
+  .en-birthday {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

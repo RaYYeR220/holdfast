@@ -1,0 +1,310 @@
+/* The Treasury page. Everything not named here is a primitive. */
+
+/* The pixel face keeps whole pixels only at multiples of 10px. */
+.tr .hf-px {
+  font-size: 20px;
+  line-height: 24px;
+}
+
+.tr-sub {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 500;
+  margin-bottom: var(--s2);
+}
+
+.tr-sub .hf-swatch {
+  width: 16px;
+  height: 16px;
+}
+
+.tr-asof,
+.tr-who,
+.tr-quiet {
+  font-style: italic;
+}
+
+.tr-break {
+  overflow-wrap: anywhere;
+}
+
+.tr-pad {
+  padding: var(--s4);
+}
+
+.tr-foot {
+  margin-top: var(--s3);
+  max-width: 60em;
+}
+
+/*
+ * A table that scrolls sideways holds what it scrolls: without this, the
+ * visually hidden text of a copy button inside it is placed against the page
+ * and widens the page instead.
+ */
+.tr .hf-table-wrap {
+  position: relative;
+}
+
+/* The tables keep to the width of their panel and let the column of words wrap; below this width they scroll sideways. */
+.tr-table .hf-table {
+  min-width: 680px;
+}
+
+.tr-table .hf-copy__value,
+.tr-table .hf-txlink__id {
+  overflow-wrap: normal;
+  white-space: nowrap;
+}
+
+.tr-memo {
+  display: block;
+  min-width: 18ch;
+}
+
+.tr-note {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--s2);
+  white-space: nowrap;
+}
+
+/* ---------- balance ---------- */
+.tr-now {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  column-gap: var(--s12);
+  row-gap: var(--s6);
+  align-items: start;
+}
+
+.tr-scan {
+  margin-top: var(--s4);
+  max-width: 36em;
+}
+
+.tr-address {
+  margin-top: var(--s5);
+  padding-top: var(--s4);
+  background: linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 0 / 8px 2px repeat-x;
+}
+
+.tr-address > * + * {
+  margin-top: var(--s2);
+}
+
+.tr-address__value .hf-copy__value {
+  font-size: 15px;
+  line-height: 24px;
+}
+
+.tr-made {
+  margin-top: var(--s5);
+}
+
+.tr-made > * + * {
+  margin-top: var(--s2);
+}
+
+.tr-made .hf-tick {
+  width: 21px;
+  height: 15px;
+  margin-right: var(--s1);
+}
+
+/* ---------- rows of panels ---------- */
+.tr-about {
+  grid-template-columns: minmax(0, 4fr) minmax(0, 8fr);
+}
+
+.tr-key > * + *,
+.tr-swaps > * + * {
+  margin-top: var(--s3);
+}
+
+/* ---------- the viewing key ---------- */
+.tr-key__plate {
+  height: 136px;
+}
+
+.tr-can > div + div {
+  margin-top: var(--s2);
+}
+
+.tr-can dt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tr-can dt .hf-swatch,
+.tr-can dt .hf-swatch.hf-pat-refused {
+  width: 16px;
+  height: 16px;
+}
+
+.tr-can dd {
+  font: var(--tx-s) var(--f-text);
+  margin-top: 2px;
+}
+
+/* ---------- private and public ---------- */
+.tr-privacy {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  column-gap: var(--s10);
+  row-gap: var(--s6);
+}
+
+.tr-privacy section > * + * {
+  margin-top: var(--s2);
+}
+
+.tr-lines li {
+  padding: var(--s2) 0 10px var(--s5);
+  background:
+    linear-gradient(var(--fg), var(--fg)) 0 18px / 8px 4px no-repeat,
+    linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 100% / 8px 2px repeat-x;
+}
+
+.tr-lines li:last-child {
+  background: linear-gradient(var(--fg), var(--fg)) 0 18px / 8px 4px no-repeat;
+}
+
+/* ---------- swaps ---------- */
+.tr-swaps__lead {
+  max-width: 52em;
+}
+
+.tr-swaps__list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s6);
+}
+
+.tr-swaps__list > li:only-child {
+  grid-column: 1 / -1;
+}
+
+.tr-swap {
+  border: var(--rule-thin) solid var(--fg);
+  padding: var(--s3) var(--s4) var(--s2);
+  min-width: 0;
+}
+
+.tr-swap > * + * {
+  margin-top: var(--s2);
+}
+
+.tr-swap__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2) var(--s4);
+}
+
+.tr-swap__title {
+  font-weight: 500;
+}
+
+.tr-txs {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s1);
+}
+
+/* ---------- funding, the owner's ---------- */
+.tr-fund {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  column-gap: var(--s10);
+  row-gap: var(--s6);
+  align-items: start;
+}
+
+.tr-fund__form > * + *,
+.tr-fund__side > * + *,
+.tr-quote > * + * {
+  margin-top: var(--s4);
+}
+
+.tr-fund__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s3) var(--s6);
+}
+
+.tr-pay {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: var(--s6);
+  row-gap: var(--s4);
+  align-items: start;
+}
+
+.tr-pay__text > * + * {
+  margin-top: var(--s3);
+}
+
+.tr-uri {
+  border: var(--rule-thin) solid var(--fg);
+  padding: var(--s2) var(--s3);
+  font: var(--num-s) var(--f-num);
+  overflow-wrap: anywhere;
+}
+
+.tr-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s2);
+}
+
+.tr-steps li {
+  border-top: var(--rule) solid var(--fg);
+  padding-top: var(--s2);
+  font: var(--tx-s) var(--f-text);
+}
+
+.tr-steps li[data-done='false'] {
+  border-top: 0;
+  padding-top: var(--s3);
+  background: linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 0 / 8px 4px repeat-x;
+}
+
+.tr-steps .hf-px {
+  display: block;
+}
+
+@media (max-width: 1279px) {
+  .tr-about,
+  .tr-fund {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 1199px) {
+  .tr-now {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 999px) {
+  .tr-swaps__list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 760px) {
+  .tr-privacy,
+  .tr-pay {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tr-pad {
+    padding: var(--s3);
+  }
+}

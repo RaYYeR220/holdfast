@@ -1,0 +1,570 @@
+/* The Lock page. Everything not named here is a primitive. */
+
+/* The pixel face keeps whole pixels only at multiples of 10px. */
+.lk .hf-px {
+  font-size: 20px;
+  line-height: 24px;
+}
+
+.lk-sub {
+  font-weight: 500;
+  margin-bottom: var(--s2);
+}
+
+.lk-asof {
+  font-style: italic;
+}
+
+.lk-who {
+  font-style: italic;
+}
+
+.lk-pad {
+  padding: var(--s4);
+}
+
+/*
+ * A table that scrolls sideways holds what it scrolls: without this, the
+ * visually hidden text of a copy button inside it is placed against the page
+ * and widens the page instead.
+ */
+.lk .hf-table-wrap {
+  position: relative;
+}
+
+/* ---------- the lock now ---------- */
+.lk-now {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  column-gap: var(--s12);
+  row-gap: var(--s6);
+  align-items: start;
+}
+
+/* A figure of the position is never broken across lines. */
+.lk-now__side .hf-kv .hf-num {
+  white-space: nowrap;
+}
+
+.lk-now__cover {
+  margin-top: var(--s6);
+}
+
+.lk-now__cover > * + * {
+  margin-top: var(--s2);
+}
+
+.lk-now__side > .lk-asof {
+  margin-top: var(--s2);
+}
+
+.lk-account {
+  margin-top: var(--s3);
+}
+
+/* ---------- rows of panels ---------- */
+.lk-three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.lk-chain {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+
+/* ---------- margin ratio ---------- */
+.lk-margin {
+  display: grid;
+  grid-template-columns: minmax(0, 4fr) minmax(0, 8fr);
+  column-gap: var(--s12);
+  row-gap: var(--s6);
+  align-items: start;
+}
+
+.lk-margin__figure > * + * {
+  margin-top: var(--s3);
+}
+
+.lk-margin__words {
+  font: var(--tx-m) var(--f-text);
+}
+
+/* The lines above and below share the inner edge of the track, so that a position means the same in all three. */
+.lk-scale__above,
+.lk-scale__below {
+  position: relative;
+  margin: 0 var(--s1);
+}
+
+.lk-scale__above {
+  height: 40px;
+}
+
+.lk-scale__now {
+  position: absolute;
+  bottom: var(--s2);
+  transform: translateX(-50%);
+  padding: 4px 8px 4px 6px;
+  background: var(--fg);
+  color: var(--bg);
+  white-space: nowrap;
+}
+
+.lk-scale__now[data-side='start'] {
+  transform: translateX(-4px);
+}
+
+.lk-scale__now[data-side='end'] {
+  transform: translateX(calc(-100% + 4px));
+}
+
+.lk-scale__track {
+  position: relative;
+  height: 40px;
+  border: var(--rule) solid var(--fg);
+}
+
+.lk-scale__zone {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+
+.lk-scale__mark {
+  position: absolute;
+  top: 0;
+  bottom: -12px;
+  width: 4px;
+  margin-left: -2px;
+  background: var(--fg);
+}
+
+/* A mark whose figure is written a line lower reaches down to it. */
+.lk-scale__mark[data-row='1'] {
+  bottom: -36px;
+}
+
+.lk-scale__mark[data-row='2'] {
+  bottom: -60px;
+}
+
+/* The ratio now: a solid needle with a clear edge, so that it reads over any fill. */
+.lk-scale__needle {
+  position: absolute;
+  top: -12px;
+  bottom: 0;
+  width: 8px;
+  margin-left: -4px;
+  background: var(--fg);
+  box-shadow:
+    4px 0 0 0 var(--bg),
+    -4px 0 0 0 var(--bg);
+}
+
+.lk-scale__below {
+  height: calc(16px + (var(--rows, 1) + 1) * 24px);
+}
+
+.lk-scale__tick {
+  position: absolute;
+  top: 16px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.lk-scale__tick[data-row='1'] {
+  top: 40px;
+}
+
+.lk-scale__tick[data-row='2'] {
+  top: 64px;
+}
+
+.lk-scale__end {
+  position: absolute;
+  top: calc(16px + var(--rows, 1) * 24px);
+  font-size: 14px;
+  line-height: 24px;
+}
+
+.lk-scale__end[data-end='start'] {
+  left: 0;
+}
+
+.lk-scale__end[data-end='end'] {
+  right: 0;
+}
+
+.lk-legend {
+  margin-top: var(--s2);
+}
+
+.lk-legend li {
+  display: grid;
+  grid-template-columns: 24px 176px 64px minmax(0, 1fr);
+  column-gap: var(--s3);
+  align-items: baseline;
+  padding: var(--s2) 0 10px;
+  background: linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 100% / 8px 2px repeat-x;
+}
+
+.lk-legend li:last-child {
+  background: none;
+  padding-bottom: 0;
+}
+
+.lk-legend .hf-swatch {
+  align-self: center;
+}
+
+.lk-legend .hf-num {
+  text-align: right;
+}
+
+.lk-legend__dots {
+  outline: 2px solid var(--fg);
+  outline-offset: -2px;
+}
+
+/* The swatch of a mark on the scale: the line itself. */
+.lk-legend__target {
+  background: linear-gradient(var(--fg), var(--fg)) 50% 0 / 4px 100% no-repeat;
+}
+
+.lk-legend__text {
+  font: var(--tx-s) var(--f-text);
+}
+
+/* ---------- funding, preview, agent, snapshots, proof ---------- */
+.lk-funding > * + *,
+.lk-preview > * + *,
+.lk-agent__facts > * + *,
+.lk-snap > * + *,
+.lk-proof > * + * {
+  margin-top: var(--s3);
+}
+
+/* The owner's agent panel: what the key is on one side, the approval on the other. */
+.lk-agent--owner {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  column-gap: var(--s10);
+  row-gap: var(--s6);
+  align-items: start;
+}
+
+.lk-agent__label {
+  margin-right: var(--s2);
+}
+
+.lk-can > div + div {
+  margin-top: var(--s2);
+}
+
+.lk-can dt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.lk-can dt .hf-swatch,
+.lk-can dt .hf-swatch.hf-pat-refused {
+  width: 16px;
+  height: 16px;
+}
+
+.lk-can dd {
+  font: var(--tx-s) var(--f-text);
+  margin-top: 2px;
+}
+
+.lk-snap__note {
+  display: block;
+}
+
+/* ---------- policy ---------- */
+.lk-policy__words {
+  font: var(--tx-l) var(--f-text);
+  max-width: 44em;
+}
+
+.lk-policy__groups {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s8) var(--s10);
+  margin-top: var(--s6);
+}
+
+.lk-policy__lead {
+  font-style: italic;
+  margin-bottom: var(--s1);
+}
+
+.lk-policy__list > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  column-gap: var(--s4);
+  align-items: baseline;
+  padding: var(--s2) 0 10px;
+  background: linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 100% / 8px 2px repeat-x;
+}
+
+.lk-policy__list > div:last-child {
+  background: none;
+}
+
+.lk-policy__figure {
+  text-align: right;
+  white-space: nowrap;
+  font-size: 16px;
+}
+
+.lk-policy__meaning {
+  grid-column: 1 / -1;
+  margin-top: 2px;
+  font: var(--tx-s) var(--f-text);
+}
+
+.lk-policy > .lk-who,
+.lk-policy > .lk-editor {
+  margin-top: var(--s5);
+}
+
+/* ---------- journal ---------- */
+.lk-journal__lead {
+  max-width: 52em;
+  margin-bottom: var(--s3);
+}
+
+/*
+ * The journal's table keeps to the width of its panel and lets the column of
+ * words wrap; below this width it scrolls sideways inside its own region.
+ */
+.lk-journal .hf-table {
+  min-width: 720px;
+}
+
+.lk-journal .hf-copy__value {
+  overflow-wrap: normal;
+  white-space: nowrap;
+}
+
+.lk-journal__what {
+  display: block;
+  min-width: 20ch;
+}
+
+.lk-journal__tags {
+  display: inline-flex;
+  gap: var(--s3);
+  margin-right: var(--s3);
+  vertical-align: baseline;
+}
+
+.lk-journal__order {
+  display: block;
+  font-style: italic;
+}
+
+.lk-journal__chain {
+  margin-top: var(--s3);
+  max-width: 60em;
+}
+
+.lk-journal__pages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2) var(--s8);
+  margin-top: var(--s4);
+}
+
+/* ---------- proof ---------- */
+.lk-proof__form {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 6fr);
+  gap: var(--s4);
+  align-items: end;
+}
+
+.lk-proof__form .hf-btn {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
+/* A command to copy: an ink plate under a paper head. */
+.lk-code {
+  border: var(--rule) solid var(--fg);
+}
+
+.lk-code__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding: var(--s2) var(--s3);
+}
+
+.lk-code__body {
+  padding: var(--s3) var(--s4);
+  overflow-x: auto;
+  background: var(--fg);
+  color: var(--bg);
+  font: var(--num-s) var(--f-num);
+}
+
+.lk-code__body:focus-visible {
+  outline-offset: -8px;
+  outline-color: var(--bg);
+}
+
+.lk-code__body code {
+  font: inherit;
+}
+
+/* ---------- backtest ---------- */
+.lk-back {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  column-gap: var(--s8);
+  row-gap: var(--s6);
+  align-items: start;
+}
+
+.lk-back__table > * + * {
+  margin-top: var(--s3);
+}
+
+.lk-back__name {
+  display: block;
+  width: min(30ch, 56vw);
+}
+
+/* ---------- owner's actions ---------- */
+.lk-break {
+  overflow-wrap: anywhere;
+}
+
+.lk-lines li {
+  padding: var(--s2) 0 10px var(--s5);
+  background:
+    linear-gradient(var(--fg), var(--fg)) 0 18px / 8px 4px no-repeat,
+    linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 100% / 8px 2px repeat-x;
+}
+
+.lk-lines li:last-child {
+  background: linear-gradient(var(--fg), var(--fg)) 0 18px / 8px 4px no-repeat;
+}
+
+.lk-editor__group {
+  border: 0;
+  min-width: 0;
+}
+
+.lk-action {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s3) var(--s6);
+}
+
+.lk-action__text {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+
+.lk-flow > * + * {
+  margin-top: var(--s3);
+}
+
+.lk-terms {
+  border: var(--rule-thin) solid var(--fg);
+  padding: var(--s3) var(--s4);
+}
+
+.lk-terms > * + * {
+  margin-top: var(--s2);
+}
+
+/* Two figures to a row, their boxes on one line whatever the length of the sentences above them. */
+.lk-editor__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s5) var(--s6);
+  align-items: end;
+}
+
+.lk-editor__grid .hf-field {
+  height: 100%;
+}
+
+.lk-editor__grid .hf-field__hint {
+  flex: 1;
+}
+
+.lk-editor__group + .lk-editor__group {
+  margin-top: var(--s8);
+}
+
+.lk-editor__group > .lk-sub {
+  margin-bottom: var(--s3);
+}
+
+.lk-editor__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s3) var(--s6);
+  margin-top: var(--s6);
+}
+
+.lk-editor > * + * {
+  margin-top: var(--s4);
+}
+
+.lk-suffix {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: center;
+  column-gap: var(--s2);
+}
+
+@media (max-width: 1279px) {
+  .lk-three,
+  .lk-agent--owner,
+  .lk-chain,
+  .lk-back,
+  .lk-margin {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .lk-policy__groups {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1199px) {
+  .lk-now {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 760px) {
+  .lk-policy__groups,
+  .lk-proof__form,
+  .lk-editor__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .lk-pad {
+    padding: var(--s3);
+  }
+
+  .lk-legend li {
+    grid-template-columns: 24px minmax(0, 1fr) max-content;
+  }
+
+  .lk-legend__text {
+    grid-column: 1 / -1;
+    margin-top: 2px;
+  }
+}
