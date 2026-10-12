@@ -252,6 +252,7 @@ Not built yet:
 - `holdfast verify` does not read Tempo, Solana or the swap service, and does not compare the journal with the root on HyperEVM.
 - Swaps deliver to the team's Hyperliquid account and Solana wallet. Funding the Tempo account from ZEC inside the application is not built.
 - Setting a treasury up from nothing has not been done on mainnet through the pages. The demo treasury's own approvals (the agent, the Tempo key, the Solana delegate) were signed before the pages existed; from the pages they were exercised with test wallets as far as the networks' refusal of unfunded keys, and the Tempo revocation on Moderato. What was done from the pages on mainnet is in [PROOF](docs/PROOF.md): two payout runs, a repeat that sent nothing, the agent key's refused withdrawal, and the snapshots the service sends by itself.
+- No notifications. A top-up request, a buy-back or a key about to expire is shown in the application and nowhere else: the treasurer has to open it. Since a lock whose top-up requests go unanswered is the one that fails, this is the first thing to build next.
 - A Tempo account whose passkey is lost for good cannot be replaced from the application.
 - An address that owns more than one organisation sees the one registered first; there is no switcher.
 
