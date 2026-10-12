@@ -37,6 +37,16 @@ describe('configuration', () => {
     expect(config.tempoSponsorPrivateKey()).toBe(VALID.TEMPO_SPONSOR_PRIVATE_KEY);
   });
 
+  it('needs the public host in production and takes nothing else for it', () => {
+    expect(readConfig(VALID).publicHost()).toBeNull();
+    expect(readConfig({ ...VALID, HOLDFAST_PUBLIC_HOST: 'Holdfast.Example' }).publicHost()).toBe('holdfast.example');
+    expect(readConfig({ ...VALID, HOLDFAST_PUBLIC_HOST: 'localhost:3000' }).publicHost()).toBe('localhost:3000');
+    expect(failure(() => readConfig({ ...VALID, NODE_ENV: 'production' }).publicHost()).message).toContain('HOLDFAST_PUBLIC_HOST');
+    for (const wrong of ['https://holdfast.example', 'holdfast.example/app', 'holdfast.example:', 'two hosts', '-.example']) {
+      expect(failure(() => readConfig({ ...VALID, HOLDFAST_PUBLIC_HOST: wrong }).publicHost()).message).toContain('HOLDFAST_PUBLIC_HOST');
+    }
+  });
+
   it('takes the master key as base64 too', () => {
     const base64 = Buffer.from(MASTER_HEX, 'hex').toString('base64');
     expect(readConfig({ ...VALID, HOLDFAST_MASTER_KEY: base64 }).masterKey()).toEqual(new Uint8Array(32).fill(0xab));
@@ -131,6 +141,7 @@ describe('configuration', () => {
         'DATABASE_URL',
         'HOLDFAST_MASTER_KEY',
         'HOLDFAST_NETWORK',
+        'HOLDFAST_PUBLIC_HOST',
         'ONECLICK_API_KEY',
         'SESSION_SECRET',
         'SOLANA_CLUSTER',

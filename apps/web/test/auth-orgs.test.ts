@@ -124,6 +124,21 @@ describe('signing in', () => {
     expect((await call(w, postVerify, 'POST', { body })).status).toBe(200);
   });
 
+  it('holds a sign-in to the configured host, whatever host the request names', async () => {
+    const strict: World = { ...w, deps: { ...w.deps, publicHost: HOST } };
+    // Another site relays a message its visitor signed for that site, and names itself as the host.
+    const relayed = await signed(OWNER, { domain: 'evil.example', uri: 'https://evil.example' });
+    const fromThere = await call(strict, postVerify, 'POST', { body: relayed, origin: 'https://evil.example', headers: { host: 'evil.example' } });
+    expect(fromThere.status).toBe(403);
+    const withForgedOrigin = await call(strict, postVerify, 'POST', { body: relayed, headers: { host: 'evil.example' } });
+    expect(withForgedOrigin.status).toBe(401);
+    expect(withForgedOrigin.headers.get('set-cookie')).toBeNull();
+
+    // The challenge is issued for the configured host, and a message written for it is taken under any Host header.
+    expect((await call(strict, getNonce, 'GET', { headers: { host: 'evil.example' } })).body.domain).toBe(HOST);
+    expect((await call(strict, postVerify, 'POST', { body: await signed(), headers: { host: 'evil.example' } })).status).toBe(200);
+  });
+
   it('knows nobody without a session, with a forged one, or with one that has run out', async () => {
     expect((await call(w, getMe, 'GET')).body).toEqual({ error: 'unauthenticated', message: 'sign in first' });
     expect((await call(w, getMe, 'GET', { cookie: `${SESSION_COOKIE}=not-a-token` })).status).toBe(401);
@@ -197,7 +212,8 @@ describe('organisations', () => {
     for (const index of [0, 1, 2]) expect(first.serviceKeys[index].address).not.toBe(second.serviceKeys[index].address);
 
     const mine = await call(w, getOrgs, 'GET', { cookie });
-    expect(mine.body.orgs.map((org: { id: string }) => org.id)).toEqual([first.id, second.id]);
+    // Two organisations made in the same instant are listed in the order of their ids, so only membership is asserted.
+    expect(mine.body.orgs.map((org: { id: string }) => org.id).sort()).toEqual([first.id, second.id].sort());
     expect((await call(w, getMe, 'GET', { cookie })).body.orgs).toEqual(mine.body.orgs);
   });
 

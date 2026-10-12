@@ -102,6 +102,7 @@ export function world(connection: PgliteConnection): World {
     report: (message) => void reported.push(message),
     network: 'mainnet',
     secrets: { session: SESSION_SECRET, tick: TICK_SECRET },
+    publicHost: null,
     store,
     zcash: { network: 'mainnet', check: (ufvk) => checkUfvk(ufvk, 'mainnet'), scanner: () => chain },
     hyperliquid: { ...hyperliquidPort('mainnet', { fetch: hyperliquid.fetch, now: clock.now }), venue: () => venue },

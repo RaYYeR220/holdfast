@@ -46,18 +46,22 @@ export function reply(body: unknown, init: { status?: number; headers?: Record<s
   });
 }
 
-/** The host a request was addressed to. */
-export function hostOf(request: Request, url: URL): string {
-  return (request.headers.get('host') ?? url.host).toLowerCase();
+/**
+ * The host the application answers as. It is the configured one: the Host
+ * header is written by whoever sent the request, so a sign-in message or an
+ * Origin is never compared with it where a host is configured.
+ */
+export function hostOf(request: Request, url: URL, deps: Pick<Deps, 'publicHost'>): string {
+  return deps.publicHost ?? (request.headers.get('host') ?? url.host).toLowerCase();
 }
 
 /**
  * A state-changing request has to come from a page of the application
- * itself: its Origin must name the host the request was sent to. A request
+ * itself: its Origin must name the host the application is served on. A request
  * without an Origin is not one a browser made on a user's behalf through this
  * application, and is refused as well.
  */
-function requireSameOrigin(request: Request, url: URL): void {
+function requireSameOrigin(request: Request, url: URL, deps: Deps): void {
   const origin = request.headers.get('origin');
   if (origin === null) throw badOrigin();
   let originHost: string;
@@ -66,7 +70,7 @@ function requireSameOrigin(request: Request, url: URL): void {
   } catch {
     throw badOrigin();
   }
-  if (originHost === '' || originHost !== hostOf(request, url)) throw badOrigin();
+  if (originHost === '' || originHost !== hostOf(request, url, deps)) throw badOrigin();
 }
 
 async function jsonBody(request: Request): Promise<unknown> {
@@ -129,7 +133,7 @@ function build<P extends Schema, B extends Schema, Q extends Schema, A, C>(
     try {
       const url = new URL(request.url);
       const changesState = request.method !== 'GET' && request.method !== 'HEAD';
-      if (changesState && guard.sameOrigin) requireSameOrigin(request, url);
+      if (changesState && guard.sameOrigin) requireSameOrigin(request, url, deps);
       const admitted = await guard.admit(request, deps);
 
       let params: unknown = {};

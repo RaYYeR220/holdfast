@@ -22,6 +22,12 @@ export interface Deps {
   report(message: string): void;
   network: HoldfastNetwork;
   secrets: { session: Uint8Array; tick: string };
+  /**
+   * The host the application is served on. Sign-in messages must be written
+   * for it and state-changing requests must come from it. Null only outside
+   * production: the host a request names is then taken at its word.
+   */
+  publicHost: string | null;
   store: PgStore;
   zcash: ZcashPort;
   hyperliquid: HyperliquidPort;

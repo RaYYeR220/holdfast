@@ -11,7 +11,7 @@ const STATEMENT = 'Sign in to Holdfast. This proves you hold this address and mo
  * GET /api/auth/nonce: a challenge to put in an EIP-4361 message, with the
  * domain the message has to be written for.
  */
-export const getNonce = publicEndpoint({}, async ({ deps, request, url }) => ({ ...(await issueNonce(deps)), domain: hostOf(request, url), version: '1', statement: STATEMENT }));
+export const getNonce = publicEndpoint({}, async ({ deps, request, url }) => ({ ...(await issueNonce(deps)), domain: hostOf(request, url, deps), version: '1', statement: STATEMENT }));
 
 /**
  * POST /api/auth/verify { message, signature }: checks the signed message and
@@ -20,7 +20,7 @@ export const getNonce = publicEndpoint({}, async ({ deps, request, url }) => ({ 
 export const postVerify = publicEndpoint(
   { body: z.strictObject({ message: z.string().min(1).max(4_000), signature: z.string().regex(/^0x[0-9a-fA-F]+$/).max(2_000) }) },
   async ({ deps, request, url, body }) => {
-    const session = await signIn(deps, { message: body.message, signature: body.signature, host: hostOf(request, url) });
+    const session = await signIn(deps, { message: body.message, signature: body.signature, host: hostOf(request, url, deps) });
     return reply({ address: session.address, expiresAt: session.expiresAt }, { headers: { 'set-cookie': sessionCookie(session.token) } });
   },
 );

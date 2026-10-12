@@ -44,6 +44,11 @@ export interface Config {
   masterKey(): Uint8Array;
   tickSecret(): string;
   sessionSecret(): Uint8Array;
+  /**
+   * The host the application is served on, as browsers name it. Null only
+   * outside production, where the host a request names is taken instead.
+   */
+  publicHost(): string | null;
   tempoSponsorPrivateKey(): Hex;
   zcashEndpoints(): string[];
   tempo(): TempoSettings;
@@ -145,6 +150,19 @@ export function readConfig(env: Env): Config {
     tickSecret: once(() => longSecret('TICK_SECRET')),
 
     sessionSecret: once(() => new TextEncoder().encode(longSecret('SESSION_SECRET'))),
+
+    publicHost: once(() => {
+      const value = optional('HOLDFAST_PUBLIC_HOST')?.toLowerCase();
+      if (value === undefined) {
+        // A request's own Host header is whatever its sender wrote. In production nothing may rest on it.
+        if (env.NODE_ENV === 'production') throw new ConfigError('HOLDFAST_PUBLIC_HOST', 'is not set');
+        return null;
+      }
+      if (!/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:\d{1,5})?$/.test(value)) {
+        throw new ConfigError('HOLDFAST_PUBLIC_HOST', 'must be a host name, with a port if it has one, and nothing else');
+      }
+      return value;
+    }),
 
     tempoSponsorPrivateKey: once(() => {
       const value = required('TEMPO_SPONSOR_PRIVATE_KEY');

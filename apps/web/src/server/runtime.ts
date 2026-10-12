@@ -58,6 +58,9 @@ export function createRuntime(env: Env): Deps {
         return config.tickSecret();
       },
     },
+    get publicHost() {
+      return config.publicHost();
+    },
     get store() {
       return store();
     },
