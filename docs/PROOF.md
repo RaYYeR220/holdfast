@@ -115,8 +115,9 @@ Each decision is an entry whose digest covers its inputs, the decision and the e
 | The team's account deploys the contract | at [`0xa6aFA5c6…37824E`](https://hyperevmscan.io/address/0xa6afa5c68146bbd4c49510987847c7c38837824e), the address a contract created by that account's first HyperEVM transaction gets; the source is on [Sourcify](https://sourcify.dev/server/v2/contract/999/0xa6aFA5c68146BbD4C49510987847C7C38837824E) as an exact match | |
 | The team's account names the attester | `attesterOf` answers `0xaB529b0D…160b33A5` | [`0x95820bd3…cf3f684e`](https://hyperevmscan.io/tx/0x95820bd326fcda3c4161dca33de852a29241cca640376b1b2ff6e817cf3f684e) |
 | The attester records the first snapshot | series 0, snapshot 0 | [`0xfeaf1ab2…8a47a5e7`](https://hyperevmscan.io/tx/0xfeaf1ab22f67efe059397765f55afaa109c04e35368d323903411a768a47a5e7) |
+| The deployed service records the second one by itself, after a tick | series 0, snapshot 1: 123 journal entries, a short of 0.01 ZEC, oracle price 1,238.9464, at 17:59:08 UTC | [`0x19acc318…f7050470`](https://hyperevmscan.io/tx/0x19acc31877082eee471e77371cb40a2190aad416e7f731042eb3c59ff7050470) |
 
-What the snapshot holds, read back with `snapshot(team, 0, 0)`:
+What the first snapshot holds, read back with `snapshot(team, 0, 0)`:
 
 | Field | Value |
 |---|---|

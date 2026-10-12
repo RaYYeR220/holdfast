@@ -51,7 +51,7 @@ The devnet and Moderato transactions below come from the proof scripts in `packa
 | The contract read the team's short of 0.01 ZEC and the prices from HyperCore | Mainnet | [PROOF 7](PROOF.md#7-hyperliquid-hyperevm-the-hedge-attested-on-chain), snapshot 0 of series 0 |
 | A journal entry can be checked against the stored root | Mainnet | The `cast call` in [PROOF 7](PROOF.md#7-hyperliquid-hyperevm-the-hedge-attested-on-chain) answers `true` for entry 2 |
 | The contract has no owner, no upgrades and holds no funds | Test | `contracts/src/HedgeAttestor.sol`, 67 Foundry tests, 6 more as read-only fork tests against mainnet |
-| The service records a snapshot after a tick, no more often than a set interval, once the owner has named its attester key | Test | `apps/web/src/server/attestations/service.ts`; `apps/web/test/attestations.test.ts`, `attestation-routes.test.ts`. The mainnet record holds one snapshot, which does not show a schedule |
+| The service records a snapshot after a tick, no more often than a set interval, once the owner has named its attester key | Mainnet for one snapshot; Test for the rules | Snapshot 1 of series 0 was sent by the deployed service after a tick: [`0x19acc318…f7050470`](https://hyperevmscan.io/tx/0x19acc31877082eee471e77371cb40a2190aad416e7f731042eb3c59ff7050470). The interval, the refusals and the pending row are covered by `apps/web/test/attestations.test.ts` and `attestation-routes.test.ts` |
 | The balance behind a commitment stays hidden | Test | `packages/attest/test/commitment.test.ts`. No commitment has been opened on chain |
 | A snapshot proves more than one moment | Not claimed | It does not. See the limits in [PROOF 7](PROOF.md#7-hyperliquid-hyperevm-the-hedge-attested-on-chain) |
 
@@ -89,6 +89,7 @@ The devnet and Moderato transactions below come from the proof scripts in `packa
 |---|---|---|
 | One ledger across Zcash, Hyperliquid, swaps and payouts, reconciled | Test | `packages/books`, 310 tests; the demo's figures at [/api/demo/demo/books](https://holdfast-iota.vercel.app/api/demo/demo/books) |
 | `holdfast verify` derives a statement again and exits 0 only when every step ran and passed | Test | `apps/cli/test/verify.test.ts` |
+| The demo organisation's published statement verifies against mainnet | Mainnet | `holdfast verify` on [`demo/statement.json`](../demo/statement.json) with [`demo/treasury.ufvk`](../demo/treasury.ufvk): all five steps pass |
 | A tampered statement fails | Test | `apps/cli/test/hostile.test.ts` |
 | `holdfast verify` has been run on the demo by a reader | Not claimed | No export of the demo organisation is published |
 | `holdfast verify` reads Tempo, Solana or the swap service | Not claimed | It does not, and its output says so |

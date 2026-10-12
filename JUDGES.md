@@ -63,12 +63,12 @@ Holdfast hedges and pays out of a treasury without taking custody of it. It hold
 ```
 pnpm install && pnpm test
 pnpm --filter @holdfast/cli holdfast backtest
-pnpm --filter @holdfast/cli holdfast verify /path/to/holdfast-statement.json --ufvk-file /path/to/key.ufvk
+pnpm --filter @holdfast/cli holdfast verify "$PWD/demo/statement.json" --ufvk-file "$PWD/demo/treasury.ufvk"
 ```
 
 - `pnpm test` runs the tests of all twelve packages; the count for each is in the README's repository map. Tests that need a live network or a real Postgres are skipped unless switched on. `forge test` in `contracts` runs 67, and 6 read-only fork tests with `HYPEREVM_FORK_URL=https://rpc.hyperliquid.xyz/evm`.
 - `holdfast backtest` grades the default policy on the nine scenarios and exits 1 if a graded one fails. `--policy file.json` grades another policy.
-- `holdfast verify` derives a statement export again from the journal, a Zcash scan with the viewing key and the Hyperliquid history, and exits 0 only when every step ran and passed. It needs an export from an organisation's owner. The repository publishes the demo treasury's viewing key and no export of the demo, so on the demo use the two checks in the README instead: the scan with [`demo/treasury.ufvk`](demo/treasury.ufvk) and the `cast call` against `HedgeAttestor`. The tool's own tests, 98 of them in `apps/cli`, include statements that were tampered with and must fail.
+- `holdfast verify` derives a statement export again from the journal, a Zcash scan with the viewing key and the Hyperliquid history, and exits 0 only when every step ran and passed. [`demo/statement.json`](demo/statement.json) is the demo organisation's export and [`demo/treasury.ufvk`](demo/treasury.ufvk) its viewing key; the command above reads mainnet and answers `VERIFIED: all 5 steps passed`. The tool's own tests, 98 of them in `apps/cli`, include statements that were tampered with and must fail.
 
 ## Known limits
 

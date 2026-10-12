@@ -32,7 +32,7 @@ Fees are paid apart from the team's money. On Tempo a separate sponsor account, 
 
 The root keys stay with the treasurer: the Zcash spending key, the Hyperliquid owner wallet, the root of the Tempo account and the Solana wallet. Whatever needs one of them is prepared by Holdfast and signed in the treasurer's own wallet: a ZIP-321 payment request, an agent approval, a key authorization, a delegate approval, a revocation.
 
-A fifth key moves no money. `HedgeAttestor` is a contract on HyperEVM, deployed at [`0xa6aFA5c68146BbD4C49510987847C7C38837824E`](https://hyperevmscan.io/address/0xa6afa5c68146bbd4c49510987847c7c38837824e). An attester named by the team's account records snapshots; for each one the contract reads the team's position and the prices from HyperCore itself and stores them beside the Merkle root of the controller's journal. The service makes an attester key for each organisation, and a deployment that is given the contract's address records a snapshot after a tick, no more often than every 60 minutes by default, once the team's account has named that key. The first snapshot on mainnet is in [PROOF 7](docs/PROOF.md#7-hyperliquid-hyperevm-the-hedge-attested-on-chain).
+A fifth key moves no money. `HedgeAttestor` is a contract on HyperEVM, deployed at [`0xa6aFA5c68146BbD4C49510987847C7C38837824E`](https://hyperevmscan.io/address/0xa6afa5c68146bbd4c49510987847c7c38837824e). An attester named by the team's account records snapshots; for each one the contract reads the team's position and the prices from HyperCore itself and stores them beside the Merkle root of the controller's journal. The service makes an attester key for each organisation, and a deployment that is given the contract's address records a snapshot after a tick, no more often than every 60 minutes by default, once the team's account has named that key. The snapshots on mainnet, the second of them sent by the deployed service after a tick, are in [PROOF 7](docs/PROOF.md#7-hyperliquid-hyperevm-the-hedge-attested-on-chain).
 
 ## How a lock works and what it costs
 
@@ -203,10 +203,10 @@ Hold the journal against the chain. The command in [PROOF 7](docs/PROOF.md#7-hyp
 Derive a statement again. `holdfast verify` takes a statement export and repeats the work instead of trusting it:
 
 ```
-pnpm --filter @holdfast/cli holdfast verify /path/to/holdfast-statement.json --ufvk-file /path/to/key.ufvk
+pnpm --filter @holdfast/cli holdfast verify "$PWD/demo/statement.json" --ufvk-file "$PWD/demo/treasury.ufvk"
 ```
 
-Relative paths are read from `apps/cli`, so give absolute ones. The export is the file the owner of an organisation downloads from `GET /api/orgs/<id>/books/export`. The repository holds the demo treasury's viewing key and no export of the demo organisation, so this third check needs a file from an owner.
+Relative paths are read from `apps/cli`, so give absolute ones. [`demo/statement.json`](demo/statement.json) is the demo organisation's export as of 12 October 2026, 18:06 UTC: 130 journal entries, one fill and 46 funding payments on Hyperliquid, the swap and the two payout runs. An export is the file the owner of an organisation downloads from `GET /api/orgs/<id>/books/export`; `apps/web/scripts/export-statement.ts` writes the same file from the command line. On that file the tool answers `VERIFIED: all 5 steps passed`.
 
 The tool runs five steps: the journal chain, Zcash (a scan with the viewing key), Hyperliquid (the account's fills and funding), reconciliation, and arithmetic. It exits 0 only when every step ran and passed. With `--offline` or without a key the two chain steps are not run and the verdict is `NOT VERIFIED`. It verifies mainnet statements only.
 
@@ -249,7 +249,6 @@ Not built yet:
 
 - The Solana run marker has not been used on mainnet. The mainnet payout run predates it; the marker is shown on devnet.
 - `holdfast verify` does not read Tempo, Solana or the swap service, and does not compare the journal with the root on HyperEVM.
-- A statement export of the demo organisation is not published, so `holdfast verify` cannot yet be run on the demo by a reader.
 - Swaps deliver to the team's Hyperliquid account and Solana wallet. Funding the Tempo account from ZEC inside the application is not built.
 - The safety view cannot read which agents a Hyperliquid account has approved, and reports that scope as unavailable.
 
