@@ -142,13 +142,13 @@ Test counts are tests passed by `pnpm test` on 12 October 2026.
 | `packages/engine` | The tick: read, decide, place one order, write the journal. The `Store` contract and an in-memory store | 23 |
 | `packages/zcash` | Scanner over lightwalletd with a viewing key, viewing-key check, ZIP-321 payment requests | 37 |
 | `packages/hyperliquid` | Account state, funding, immediate-or-cancel orders that are safe to retry, the agent approval, the withdrawal probe | 141, and 4 that read mainnet when `HL_LIVE=1` |
-| `packages/intents` | NEAR Intents 1Click quotes and status; the reference price | 24 |
-| `packages/tempo` | Access-key authorization, the payout rail, lookup of a run by its memos, the two refusal probes | 191, and 1 for Moderato when `TEMPO_MODERATO=1` |
+| `packages/intents` | NEAR Intents 1Click quotes and status; the reference price | 26 |
+| `packages/tempo` | Access-key authorization and revocation, the payout rail, lookup of a run by its memos, the two refusal probes | 235, and 2 for Moderato when `TEMPO_MODERATO=1` |
 | `packages/solana` | Delegate approval and revocation, the payout rail with its run marker, lookup of a run, the refusal probes | 286, and 1 for devnet when `SOLANA_DEVNET=1` |
-| `packages/db` | Postgres schema and migrations, the store with its lease, encryption of stored keys | 199 on an in-process Postgres, and 36 for a real one when `HOLDFAST_TEST_DATABASE_URL` is set |
+| `packages/db` | Postgres schema and migrations, the store with its lease, encryption of stored keys | 204 on an in-process Postgres, and 36 for a real one when `HOLDFAST_TEST_DATABASE_URL` is set |
 | `packages/books` | One ledger across all sources, statements, reconciliation, auditor scopes, the published statement | 310 |
 | `packages/attest` | ABI of `HedgeAttestor`, journal leaves and proofs, the treasury commitment, reads of the contract | 47 |
-| `apps/web` | Next.js: the API, `/api/tick` with its attestation step, the pages and their client code | 352 |
+| `apps/web` | Next.js: the API, `/api/tick` with its attestation step, the pages and their client code | 682 |
 | `apps/cli` | `holdfast backtest` and `holdfast verify` | 98 |
 | `contracts` | `HedgeAttestor.sol` with Foundry tests | 67, and 6 read-only fork tests against HyperEVM mainnet when `HYPEREVM_FORK_URL` is set |
 
@@ -250,6 +250,9 @@ Not built yet:
 - No second payment of a Solana run has been sent on mainnet. Run `HF-2026-10-0004` set its marker there; the chain failing a repeat is shown on devnet.
 - `holdfast verify` does not read Tempo, Solana or the swap service, and does not compare the journal with the root on HyperEVM.
 - Swaps deliver to the team's Hyperliquid account and Solana wallet. Funding the Tempo account from ZEC inside the application is not built.
+- Setting a treasury up from nothing has not been done on mainnet through the pages. The demo treasury's own approvals (the agent, the Tempo key, the Solana delegate) were signed before the pages existed; from the pages they were exercised with test wallets as far as the networks' refusal of unfunded keys, and the Tempo revocation on Moderato. What was done from the pages on mainnet is in [PROOF](docs/PROOF.md): two payout runs, a repeat that sent nothing, the agent key's refused withdrawal, and the snapshots the service sends by itself.
+- A Tempo account whose passkey is lost for good cannot be replaced from the application.
+- An address that owns more than one organisation sees the one registered first; there is no switcher.
 
 ## Licence
 

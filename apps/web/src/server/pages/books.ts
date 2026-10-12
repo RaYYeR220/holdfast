@@ -22,7 +22,7 @@ import { ApiError, notFound } from '../errors';
 import { type Reading, available, missing } from '../reading';
 
 /** How long the reconciliation may wait for the payout chains before the books are shown without it, ms. */
-export const RECONCILIATION_PATIENCE_MS = 12_000;
+export const RECONCILIATION_PATIENCE_MS = 20_000;
 
 /**
  * The books as the pages show them: the statement, the ledger behind it and
