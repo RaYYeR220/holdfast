@@ -1,0 +1,22 @@
+{
+  "name": "@holdfast/attest",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json",
+    "abi": "tsx scripts/write-abi.ts",
+    "vectors": "tsx scripts/write-vectors.ts"
+  },
+  "dependencies": {
+    "@holdfast/core": "workspace:*",
+    "viem": "2.57.4"
+  },
+  "devDependencies": {
+    "@holdfast/engine": "workspace:*"
+  }
+}
