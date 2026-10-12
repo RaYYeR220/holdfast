@@ -285,7 +285,7 @@ export function Hero() {
           <span ref={line1}>Lock your runway.</span> <span ref={line2}>Keep your keys.</span>
         </h1>
         <p className="lp-sentence" ref={sentence}>
-          Holdfast fixes the dollar value of a ZEC treasury and pays your team in stablecoins, using only keys that cannot move your money.
+          Holdfast fixes the dollar value of a ZEC treasury and pays your team in stablecoins, using only keys that cannot take your treasury.
         </p>
         <div className="lp-acts" ref={actions}>
           <Button href="/demo">Open the live demo treasury</Button>

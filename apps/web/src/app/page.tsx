@@ -261,7 +261,7 @@ export default async function LandingPage() {
                   <dl className="lp-kd">
                     <div>
                       <dt className="hf-sr">Who holds it</dt>
-                      <dd>Every ZEC movement is a payment request the treasurer signs in their own wallet. Holdfast never holds a key that can move the money.</dd>
+                      <dd>Every ZEC movement is a payment request the treasurer signs in their own wallet. Holdfast never holds a key that can spend the treasury.</dd>
                     </div>
                   </dl>
                 </li>

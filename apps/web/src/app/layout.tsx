@@ -6,7 +6,7 @@ import '@/ui/global.css';
 import '@/ui/components.css';
 import '@/ui/shell.css';
 
-const DESCRIPTION = 'Holdfast fixes the dollar value of a ZEC treasury and pays your team in stablecoins, using only keys that cannot move your money.';
+const DESCRIPTION = 'Holdfast fixes the dollar value of a ZEC treasury and pays your team in stablecoins, using only keys that cannot take your treasury.';
 
 /** The address the pages are served from, for the absolute links of the metadata. */
 function siteUrl(): URL {
