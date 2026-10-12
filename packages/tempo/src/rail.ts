@@ -9,15 +9,19 @@ import { memoBytes, runIdProblem, runMemos } from './memo';
 import { TX_VALIDITY_SECONDS, feeCeiling, gasCeiling, keyProblems, lineProblems, payoutProblems } from './preflight';
 import type { PayoutFacts } from './preflight';
 import { decodeRevertReason, explainError } from './reasons';
-import { keyAuthorizedIn, runLines, sameLines, verifyPayoutLogs } from './receipt';
+import { keyAuthorizedIn, keyRevokedIn, runLines, sameLines, verifyPayoutLogs } from './receipt';
+import { REVOCATION_VALIDITY_SECONDS, buildRevocation, revocationProblems, sponsorProblem, verifySignedRevocation } from './revocation';
 import { type Call, transferCall, transferWithMemoCall } from './tip20';
 import type {
   FindRunOptions,
   KeyStatus,
   PreflightResult,
   ProbeResult,
+  RevocationPreparation,
+  RevocationResult,
   RunOnChain,
   SubmitAuthorizationInput,
+  SubmitRevocationInput,
   TempoPayoutRail,
   TempoPayoutResult,
   TempoRailConfig,
@@ -33,6 +37,8 @@ export interface RailDeps {
 }
 
 const POLL_MS = 500;
+/** How often a read pinned to the head is asked for before it counts as failed: a node behind a load balancer may be a block short. */
+const PINNED_READ_ATTEMPTS = 4;
 /** How long past the validity window the rail keeps asking before it calls the outcome unknown. */
 const SETTLE_GRACE_SECONDS = 30;
 /** Gas given to a probe. Nothing can be estimated for a transaction that is meant to fail. */
@@ -42,6 +48,13 @@ const OVER_LIMIT_MEMO = 'HF-PROBE-OVER-LIMIT';
 
 type Outcome = { kind: 'included'; receipt: ChainReceipt } | { kind: 'expired' } | { kind: 'unknown'; detail: string | null };
 type Launch = { kind: 'rejected'; reason: string } | (Outcome & { unreachable: string | null });
+
+/** The nonce sequence a transaction is numbered on, and how long one sent on it stays valid. */
+interface Sequence {
+  /** Next nonce of the sequence on `root` as of `atBlock`; rejects when the node does not have the block. */
+  nonceAt(root: Address, atBlock: bigint): Promise<number>;
+  validitySeconds: number;
+}
 
 interface Send {
   root: Address;
@@ -71,6 +84,10 @@ function carrier(to: Address): PayoutLine {
 
 function noReceipt(error: string, tx: Hex | null = null): ProbeResult {
   return { tx, includedOnChain: false, reverted: false, reason: null, returnData: null, gasUsed: null, error };
+}
+
+function notRevoked(error: string, tx: Hex | null = null, gasUsed: bigint | null = null): RevocationResult {
+  return { ok: false, tx, error, gasUsed };
 }
 
 /** Runs tasks one after another: the rail is the only writer on its nonce lane, and two sends must not share a nonce. */
@@ -107,6 +124,10 @@ function serialQueue() {
  * date. The search for an earlier payment either covers every block up to the
  * one the nonce was read at or fails; a transaction is called expired only on
  * a nonce read pinned to a block whose time is past its deadline.
+ *
+ * The key stays the root's to take back. The rail holds no root, so it says
+ * what the root has to sign for that (`prepareRevocation`) and sends what the
+ * root signed (`submitRevocation`), with the sponsor paying for it as well.
  */
 export function createTempoPayoutRail(config: TempoRailConfig, deps: RailDeps = {}): TempoPayoutRail {
   const settings = resolveConfig(config);
@@ -115,6 +136,10 @@ export function createTempoPayoutRail(config: TempoRailConfig, deps: RailDeps = 
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const clock = deps.clock ?? Date.now;
   const exclusive = serialQueue();
+  /** Payouts, on the rail's own lane of the paying account. */
+  const payoutLane: Sequence = { nonceAt: (root, atBlock) => io.laneNonce(root, atBlock), validitySeconds: TX_VALIDITY_SECONDS };
+  /** What the root signs itself, on the account's own sequence. */
+  const accountSequence: Sequence = { nonceAt: (root, atBlock) => io.accountNonce(root, atBlock), validitySeconds: REVOCATION_VALIDITY_SECONDS };
 
   function requireAccount(account: string): Address {
     if (!isAddress(account)) throw new TempoRailError(`account "${account}" is not a valid address`);
@@ -208,13 +233,13 @@ export function createTempoPayoutRail(config: TempoRailConfig, deps: RailDeps = 
    *
    * "Expired" needs two facts about one and the same block: its timestamp is
    * at or past `validBefore`, so no later block can include the transaction,
-   * and the lane's nonce as of that block has not moved, so no block up to it
-   * did. The nonce is read pinned to that block; a node that does not have the
-   * block refuses the read, and a failed read concludes nothing. Whatever
-   * falls short of that is "unknown".
+   * and the nonce of its sequence as of that block has not moved, so no block
+   * up to it did. The nonce is read pinned to that block; a node that does not
+   * have the block refuses the read, and a failed read concludes nothing.
+   * Whatever falls short of that is "unknown".
    */
-  async function settle(root: Address, hash: Hex, nonce: number, validBefore: number): Promise<Outcome> {
-    const giveUpAt = clock() + (TX_VALIDITY_SECONDS + SETTLE_GRACE_SECONDS) * 1000;
+  async function settle(root: Address, hash: Hex, nonce: number, validBefore: number, sequence: Sequence): Promise<Outcome> {
+    const giveUpAt = clock() + (sequence.validitySeconds + SETTLE_GRACE_SECONDS) * 1000;
     let detail: string | null = null;
     for (;;) {
       try {
@@ -222,7 +247,7 @@ export function createTempoPayoutRail(config: TempoRailConfig, deps: RailDeps = 
         if (receipt) return { kind: 'included', receipt };
         const head = await io.head();
         if (head.timestamp >= validBefore) {
-          if ((await io.laneNonce(root, head.number)) <= nonce) return { kind: 'expired' };
+          if ((await sequence.nonceAt(root, head.number)) <= nonce) return { kind: 'expired' };
           detail = 'the nonce was used but the node has no receipt for the transaction';
         } else {
           detail = null;
@@ -235,7 +260,7 @@ export function createTempoPayoutRail(config: TempoRailConfig, deps: RailDeps = 
     }
   }
 
-  async function launch(root: Address, tx: SignedTx, nonce: number, validBefore: number): Promise<Launch> {
+  async function launch(root: Address, tx: SignedTx, nonce: number, validBefore: number, sequence: Sequence = payoutLane): Promise<Launch> {
     let unreachable: string | null = null;
     try {
       const sent = await io.broadcast(tx.serialized);
@@ -244,7 +269,7 @@ export function createTempoPayoutRail(config: TempoRailConfig, deps: RailDeps = 
       // The node may or may not have the bytes; the receipt or the validity window will tell.
       unreachable = explainError(error);
     }
-    return { ...(await settle(root, tx.hash, nonce, validBefore)), unreachable };
+    return { ...(await settle(root, tx.hash, nonce, validBefore, sequence)), unreachable };
   }
 
   async function send(input: Send): Promise<TempoPayoutResult> {
@@ -410,6 +435,105 @@ export function createTempoPayoutRail(config: TempoRailConfig, deps: RailDeps = 
     return probing(() => probe(i.account, i.to, (to) => transferCall(token, to, 1n)));
   }
 
+  /**
+   * The next nonce of the account's own sequence as of `atBlock`. The node
+   * that answers may not have that block yet and refuses then; it is asked
+   * again a few times before the read counts as failed. What comes back is
+   * never older than the block.
+   */
+  async function accountNonceAt(root: Address, atBlock: bigint): Promise<number> {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await io.accountNonce(root, atBlock);
+      } catch (error) {
+        if (attempt >= PINNED_READ_ATTEMPTS) throw error;
+        await sleep(POLL_MS);
+      }
+    }
+  }
+
+  /**
+   * Why there is nothing to take back on this account; null when there is.
+   * A live key can be taken back whether it is bounded or not. A key the
+   * keychain holds with an expiry of zero is not one it is known to hand out;
+   * it is left for the root to revoke, not read as a key that ran out in 1970.
+   */
+  function nothingToRevoke(key: KeyStatus): string | null {
+    if (key.revoked) return `access key ${accessKey} is already revoked on this account; there is nothing to revoke`;
+    if (key.live) return null;
+    // Unknown to the keychain on this account.
+    if (key.expiresAt === null) return `access key ${accessKey} is not authorized on this account; there is nothing to revoke`;
+    if (key.expiresAt > 0) return `access key ${accessKey} expired at ${iso(key.expiresAt / 1000)} and can sign nothing; there is nothing to revoke`;
+    return null;
+  }
+
+  async function prepareRevocation(account: string): Promise<RevocationPreparation> {
+    const invalid = accountProblems(account);
+    if (invalid.length > 0) return { ok: false, problems: invalid };
+    const root = getAddress(account);
+    await io.assertChain();
+    const { key, head } = await status(root);
+    const nothing = nothingToRevoke(key);
+    if (nothing) return { ok: false, problems: [nothing] };
+    const [nonce, sponsorBalance] = await Promise.all([accountNonceAt(root, head.number), io.balanceOf(settings.feeToken, sponsor)]);
+    // The root is not asked to sign what the sponsor could not pay to send.
+    const unfunded = sponsorProblem({ baseFeePerGas: head.baseFeePerGas, sponsor, sponsorBalance });
+    if (unfunded) return { ok: false, problems: [unfunded] };
+    const request = buildRevocation({ accessKeyAddress: accessKey, chainId: settings.chainId, nonce, baseFeePerGas: head.baseFeePerGas, now: head.timestamp, feePayer: sponsor, feeToken: settings.feeToken });
+    return { ok: true, request };
+  }
+
+  async function revokeOnce(i: SubmitRevocationInput): Promise<RevocationResult> {
+    const invalid = accountProblems(i.account);
+    if (invalid.length > 0) return notRevoked(invalid.join('; '));
+    const root = getAddress(i.account);
+    // Settled before any network call: the transaction revokes this rail's key, the root of this account signed it for a fee payer, and it does nothing else.
+    const checked = verifySignedRevocation({ serialized: i.signedTransaction, account: root, accessKey, chainId: settings.chainId });
+    if (!checked.ok) return notRevoked(checked.problems.join('; '));
+    const { revocation } = checked;
+
+    await io.assertChain();
+    const { key, head } = await status(root);
+    const nothing = nothingToRevoke(key);
+    if (nothing) return notRevoked(nothing);
+    const [nonce, sponsorBalance] = await Promise.all([accountNonceAt(root, head.number), io.balanceOf(settings.feeToken, sponsor)]);
+    const problems = revocationProblems(revocation, { now: head.timestamp, baseFeePerGas: head.baseFeePerGas, nonce, sponsor, sponsorBalance });
+    if (problems.length > 0) return notRevoked(problems.join('; '));
+
+    const tx = await io.signRevocation({ root, accessKey, nonce: revocation.nonce, validBefore: revocation.validBefore, envelope: revocation.envelope });
+    const outcome = await launch(root, tx, revocation.nonce, revocation.validBefore, accountSequence);
+    if (outcome.kind === 'rejected') return notRevoked(`the node rejected the transaction: ${outcome.reason}`);
+    if (outcome.kind === 'expired') {
+      const cause = outcome.unreachable ? ` (broadcast failed: ${outcome.unreachable})` : '';
+      return notRevoked(`the transaction was not included before it expired at ${iso(revocation.validBefore)}${cause}; it revoked nothing and can never be included`, tx.hash);
+    }
+    if (outcome.kind === 'unknown') {
+      const cause = outcome.detail ?? outcome.unreachable ?? 'no receipt yet';
+      return notRevoked(`the outcome is unknown (${cause}); read the status of the key before preparing another revocation`, tx.hash);
+    }
+
+    const { receipt } = outcome;
+    if (receipt.status === 'reverted') {
+      const reason = decodeRevertReason(await io.revertData(tx.hash).catch(() => null));
+      const why = reason ? `${reason.name}: ${reason.message}` : 'the RPC did not return a revert reason';
+      return notRevoked(`the transaction reverted on chain and revoked nothing (${why})`, tx.hash, receipt.gasUsed);
+    }
+    if (!keyRevokedIn(receipt.logs, root, accessKey)) {
+      return notRevoked('the transaction succeeded but its receipt does not show the keychain revoking the key', tx.hash, receipt.gasUsed);
+    }
+    return { ok: true, tx: tx.hash, error: null, gasUsed: receipt.gasUsed };
+  }
+
+  /**
+   * Chain-level failures come back as `ok: false`; this never rejects. It does
+   * not wait its turn behind payouts: a revocation is numbered on the
+   * account's own sequence, and a payout that is on its way settles the same
+   * with or without it.
+   */
+  function submitRevocation(i: SubmitRevocationInput): Promise<RevocationResult> {
+    return revokeOnce(i).catch((error: unknown) => notRevoked(explainError(error)));
+  }
+
   return {
     chain: 'tempo',
     accessKeyAddress: accessKey,
@@ -422,6 +546,8 @@ export function createTempoPayoutRail(config: TempoRailConfig, deps: RailDeps = 
     probeOverLimit,
     probeOutOfScope,
     submitAuthorization,
+    prepareRevocation,
+    submitRevocation,
   };
 }
 

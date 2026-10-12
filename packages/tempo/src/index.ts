@@ -9,6 +9,7 @@ export * from './preflight';
 export * from './rail';
 export * from './reasons';
 export * from './receipt';
+export * from './revocation';
 export * from './tip20';
 export * from './types';
 export * from './units';

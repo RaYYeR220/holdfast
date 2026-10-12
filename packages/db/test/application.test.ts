@@ -182,10 +182,63 @@ describe('service keys', () => {
     await expect(store.installKey(org, agent)).rejects.toThrow('was revoked and cannot be installed again');
   });
 
+  it('are replaced only in the place of the key that was named, which stays on record', async () => {
+    const { store, org, clock } = await setup();
+    await store.installKey(org, agent);
+    await store.installKey(org, access);
+    clock.advance(60_000);
+    const next = { ...access, address: '0xaccess2', secret: '0xsecret-of-access-2' };
+    expect(await store.replaceKey(org, access.address, next)).toBe(true);
+
+    expect(await store.activeKey(org, 'tempo_access')).toEqual({ address: next.address, secret: next.secret });
+    expect(await store.activeKey(org, 'hl_agent')).toMatchObject({ address: agent.address });
+    expect(await store.listKeys(org)).toEqual([
+      { kind: 'tempo_access', address: '0xaccess2', status: 'active', createdAt: clock.ms, revokedAt: null },
+      { kind: 'hl_agent', address: '0xagent1', status: 'active', createdAt: clock.ms - 60_000, revokedAt: null },
+      { kind: 'tempo_access', address: '0xaccess1', status: 'revoked', createdAt: clock.ms - 60_000, revokedAt: clock.ms },
+    ]);
+    const [row] = await rowsOf<{ secret_enc: string }>("select secret_enc from holdfast.keys where org_id = $1 and address = '0xaccess2'", [org]);
+    expect(row?.secret_enc).toMatch(/^v1\./);
+    expect(row?.secret_enc).not.toContain(next.secret);
+
+    // The key that was named is no longer the active one: nothing is written, whatever is offered in its place.
+    const late = { ...access, address: '0xaccess3', secret: '0xsecret-of-access-3' };
+    expect(await store.replaceKey(org, access.address, late)).toBe(false);
+    expect(await store.replaceKey(org, '0xnever-a-key', late)).toBe(false);
+    // A key of another kind is not the one to give way either.
+    expect(await store.replaceKey(org, agent.address, late)).toBe(false);
+    expect(await store.replaceKey(org, next.address, next)).toBe(false);
+    expect((await store.listKeys(org)).map((k) => [k.address, k.status])).toEqual([
+      ['0xaccess2', 'active'],
+      ['0xagent1', 'active'],
+      ['0xaccess1', 'revoked'],
+    ]);
+    // A retired key does not come back as the replacement of its successor.
+    await expect(store.replaceKey(org, next.address, access)).rejects.toThrow('was revoked and cannot be installed again');
+    expect(await store.activeKey(org, 'tempo_access')).toMatchObject({ address: next.address });
+  });
+
+  it('are replaced once when two replacements of the same key arrive together', async () => {
+    const { store, org } = await setup();
+    await store.installKey(org, access);
+    const candidates = ['0xaccess-a', '0xaccess-b', '0xaccess-c'].map((address) => ({ ...access, address, secret: `0xsecret-of-${address}` }));
+    const written = await Promise.all(candidates.map((candidate) => store.replaceKey(org, access.address, candidate)));
+    expect(written.filter(Boolean)).toHaveLength(1);
+
+    const keys = await store.listKeys(org);
+    expect(keys).toHaveLength(2);
+    expect(keys.filter((k) => k.status === 'active').map((k) => k.address)).toEqual([candidates[written.indexOf(true)]?.address]);
+    expect(keys.filter((k) => k.status === 'revoked').map((k) => k.address)).toEqual([access.address]);
+  });
+
   it('are null for a kind the organisation has no key of, and refused for an organisation nobody has', async () => {
     const { store, org } = await setup();
     expect(await store.activeKey(org, 'solana_delegate')).toBeNull();
     await expect(store.installKey('nobody', agent)).rejects.toThrow('unknown organisation nobody');
+    await expect(store.replaceKey('nobody', access.address, access)).rejects.toThrow('unknown organisation nobody');
+    // An organisation with no key of the kind has none to give way.
+    expect(await store.replaceKey(org, access.address, access)).toBe(false);
+    expect(await store.activeKey(org, 'tempo_access')).toBeNull();
   });
 });
 

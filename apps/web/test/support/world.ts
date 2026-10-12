@@ -23,7 +23,7 @@ import { FakeAttestor, FakeOneClick, FakeReference, FakeSolana, FakeVenue, SOLAN
 
 export { STARTUP_TIMEOUT_MS, migratedPglite } from '../../../../packages/db/test/support/stores';
 export { BIRTHDAY, note } from '../../../../packages/db/test/support/fakes';
-export { PAYEES, ROOT, ROOT_ACCOUNT, START, policyFor, signAuthorization } from '../../../../packages/tempo/test/fake-chain';
+export { PAYEES, ROOT, ROOT_ACCOUNT, START, policyFor, signAuthorization, signRevocation } from '../../../../packages/tempo/test/fake-chain';
 
 export const HOST = 'app.holdfast.test';
 export const ORIGIN = `https://${HOST}`;

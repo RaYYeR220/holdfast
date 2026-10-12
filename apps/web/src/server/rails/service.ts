@@ -1,5 +1,13 @@
 import type { OrgRecord } from '@holdfast/db';
-import { type AccessKeyAuthorizationRequest, type AccessKeyPolicyInput, type KeyStatus, buildAccessKeyAuthorization, serializeSignedAuthorization } from '@holdfast/tempo';
+import {
+  type AccessKeyAuthorizationRequest,
+  type AccessKeyPolicyInput,
+  type KeyStatus,
+  type RevocationPreparation,
+  type RevocationRequest,
+  buildAccessKeyAuthorization,
+  serializeSignedAuthorization,
+} from '@holdfast/tempo';
 import type { Address, Hex } from 'viem';
 import type { Deps, SolanaUnsigned } from '../deps';
 import { invalid, refused, unavailable } from '../errors';
@@ -117,6 +125,80 @@ export async function submitTempoAuthorization(deps: RailDeps, org: OrgRecord, s
     throw refused(deps.redact(result.error ?? 'the authorization was not accepted'), result.tx === null ? {} : { tx: result.tx, txUrl: deps.tempo.txUrl(result.tx) });
   }
   return { authorized: true, tx: result.tx, txUrl: result.tx === null ? null : deps.tempo.txUrl(result.tx), sent: result.tx !== null };
+}
+
+const TEMPO = 'Tempo';
+
+/**
+ * What the root of the organisation's Tempo account signs to take the
+ * service's access key back: one call, `revokeKey` of that key on the Account
+ * Keychain, with the nonce, the fee and the deadline as the chain has them
+ * now. The service's sponsor pays the fee, with a signature of its own after
+ * the root's, so the account needs to hold nothing for it. Changes nothing,
+ * and refuses when there is nothing to revoke.
+ */
+export async function tempoRevokeRequest(deps: RailDeps, org: OrgRecord): Promise<RevocationRequest> {
+  const access = await tempoAccess(deps, org);
+  let preparation: RevocationPreparation;
+  try {
+    preparation = await access.rail.prepareRevocation(access.account);
+  } catch (error) {
+    throw unavailable(TEMPO, deps.redact(messageOf(error)));
+  }
+  if (!preparation.ok) throw refused(deps.redact(preparation.problems.join('; ')));
+  return preparation.request;
+}
+
+/**
+ * Send a revocation the root signed. The rail gives it the sponsor's
+ * signature and sends it only if it is the revocation of this organisation's
+ * key, by the root of this organisation's account, on the terms the rail
+ * prepares; a transaction that is anything else is refused and goes nowhere.
+ * The answer comes once the receipt shows the keychain revoking the key.
+ */
+export async function submitTempoRevoke(deps: RailDeps, org: OrgRecord, submission: { signedTransaction: string }): Promise<{ tx: string; txUrl: string }> {
+  const access = await tempoAccess(deps, org);
+  const result = await access.rail.submitRevocation({ account: access.account, signedTransaction: submission.signedTransaction as Hex });
+  if (!result.ok || result.tx === null) {
+    throw refused(deps.redact(result.error ?? 'the revocation was not accepted'), result.tx === null ? {} : { tx: result.tx, txUrl: deps.tempo.txUrl(result.tx) });
+  }
+  return { tx: result.tx, txUrl: deps.tempo.txUrl(result.tx) };
+}
+
+/**
+ * Give the organisation a new Tempo access key in the place of one that is
+ * dead. A key the root revoked can never be authorized again and an expired
+ * one signs nothing, so without a new key the organisation could not pay on
+ * Tempo again. The old key is retired on the chain's own word that it is
+ * revoked or expired, and on nothing less: a key that can still sign, or that
+ * was never authorized, is left in place, and so is every key while the chain
+ * cannot be read. The retired key stays on record with its address. The new
+ * one is made the way an organisation's first is and can do nothing until the
+ * root authorizes it. Answers with the rail as it stands afterwards.
+ */
+export async function replaceTempoAccessKey(deps: RailDeps, org: OrgRecord): Promise<TempoRailView> {
+  const access = await tempoAccess(deps, org);
+  let key: KeyStatus;
+  try {
+    key = await access.rail.keyStatus(access.account);
+  } catch (error) {
+    throw unavailable(TEMPO, deps.redact(messageOf(error)));
+  }
+  // Known to the keychain, not revoked and yet not live: its expiry, a real time, has passed.
+  const expired = !key.revoked && !key.live && key.expiresAt !== null && key.expiresAt > 0;
+  if (!key.revoked && !expired) {
+    const { accessKey } = access;
+    if (key.authorized) throw refused(`access key ${accessKey} is authorized on this account and can still pay; revoke it before a new key takes its place`);
+    if (key.live) throw refused(`access key ${accessKey} is live on this account and can still sign; revoke it before a new key takes its place`);
+    // An expiry of zero is not a time that passed. The keychain is not known to report one for a key it holds, and such a key is not taken for dead.
+    if (key.expiresAt !== null) throw refused(`the chain holds access key ${accessKey} on this account with an expiry it does not state; revoke it before a new key takes its place`);
+    throw refused(`access key ${accessKey} was never authorized on this account; nothing is wrong with it, and it is not replaced`);
+  }
+
+  const next = deps.tempo.newAccessKey();
+  // Nothing is written when another request has put a key in the dead one's place already: either way one new key stands there.
+  await deps.store.replaceKey(org.id, access.accessKey, { kind: 'tempo_access', address: next.address, secret: next.privateKey });
+  return tempoRail(deps, org);
 }
 
 export interface SolanaRailView {

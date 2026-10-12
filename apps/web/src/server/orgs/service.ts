@@ -37,6 +37,8 @@ export interface OrganisationView {
   createdAt: number;
   /** The Hyperliquid account of the organisation, which is the address that owns it. */
   owner: string;
+  /** Which Zcash chain the treasury is on and which Hyperliquid the hedge is on. It is the deployment's, the same for every organisation. */
+  network: HoldfastNetwork;
   birthday: number;
   scannedTo: number | null;
   lockEnabled: boolean;
@@ -63,13 +65,14 @@ export function solanaOwnerOf(text: string): string {
 const optionalAccount = (value: string | null | undefined, read: (text: string) => string): string | null | undefined =>
   value === undefined || value === null ? value : read(value);
 
-async function view(deps: Pick<Deps, 'store'>, org: OrgRecord): Promise<OrganisationView> {
+async function view(deps: Pick<Deps, 'store' | 'network'>, org: OrgRecord): Promise<OrganisationView> {
   const keys = await deps.store.listKeys(org.id);
   return {
     id: org.id,
     name: org.name,
     createdAt: org.createdAt,
     owner: org.hlUser,
+    network: deps.network,
     birthday: org.birthday,
     scannedTo: org.scannedTo,
     lockEnabled: org.lockEnabled,
@@ -94,7 +97,7 @@ async function view(deps: Pick<Deps, 'store'>, org: OrgRecord): Promise<Organisa
  * each of them on its chain they can do nothing, and after that only what was
  * authorized.
  */
-export async function createOrganisation(deps: Pick<Deps, 'store' | 'zcash' | 'hyperliquid' | 'tempo' | 'solana'>, owner: string, input: NewOrganisation): Promise<OrganisationView> {
+export async function createOrganisation(deps: Pick<Deps, 'store' | 'network' | 'zcash' | 'hyperliquid' | 'tempo' | 'solana'>, owner: string, input: NewOrganisation): Promise<OrganisationView> {
   const ufvk = input.ufvk.trim();
   const checked = deps.zcash.check(ufvk);
   if (!checked.ok) throw invalid(`the viewing key was not accepted: ${redactViewingKeys(checked.error, ufvk)}`);
@@ -133,7 +136,7 @@ export async function createOrganisation(deps: Pick<Deps, 'store' | 'zcash' | 'h
   return readOrganisation(deps, id);
 }
 
-export async function readOrganisation(deps: Pick<Deps, 'store'>, orgId: string): Promise<OrganisationView> {
+export async function readOrganisation(deps: Pick<Deps, 'store' | 'network'>, orgId: string): Promise<OrganisationView> {
   const org = await deps.store.findOrg(orgId);
   if (org === null) throw new Error(`unknown organisation ${orgId}`);
   return view(deps, org);
@@ -146,7 +149,7 @@ export async function listOrganisations(deps: Pick<Deps, 'store'>, owner: string
 }
 
 /** Change the name, the burn figure or the payout accounts. Fields that are not given stay as they are. */
-export async function updateOrganisation(deps: Pick<Deps, 'store'>, orgId: string, profile: OrganisationProfile): Promise<OrganisationView> {
+export async function updateOrganisation(deps: Pick<Deps, 'store' | 'network'>, orgId: string, profile: OrganisationProfile): Promise<OrganisationView> {
   const patch: OrgPatch = {};
   if (profile.name !== undefined) patch.name = profile.name;
   if (profile.monthlyBurnUsd !== undefined) patch.monthlyBurnUsd = profile.monthlyBurnUsd;

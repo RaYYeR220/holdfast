@@ -20,7 +20,7 @@ const GAS_PER_LINE = 270_000n;
 const GAS_AUTHORIZE_BASE = 3_000_000n;
 const GAS_AUTHORIZE_PER_RECIPIENT = 520_000n;
 /** The node suggests twice the base fee and the SDK adds a fifth on top. */
-const FEE_HEADROOM = 3n;
+export const FEE_HEADROOM = 3n;
 /** Gas is priced in units of 1e-18 USD, stablecoins count in 1e-6. */
 const ATTO_PER_BASE_UNIT = 10n ** 12n;
 

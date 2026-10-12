@@ -49,6 +49,8 @@ const OPERATIONS: Operation[] = [
   { name: 'getOrg', call: (api) => api.getOrg(ORG), method: 'GET', url: org() },
   { name: 'updateOrg', call: (api) => api.updateOrg(ORG, { name: 'Acme', tempoAccount: null }), method: 'PATCH', url: org(), body: { name: 'Acme', tempoAccount: null } },
 
+  { name: 'zcashTip', call: (api) => api.zcashTip(), method: 'GET', url: '/api/zcash/tip' },
+
   { name: 'getPolicy', call: (api) => api.getPolicy(ORG), method: 'GET', url: org('/policy') },
   { name: 'putPolicy', call: (api) => api.putPolicy(ORG, DEFAULT_POLICY), method: 'PUT', url: org('/policy'), body: DEFAULT_POLICY },
   { name: 'setLock', call: (api) => api.setLock(ORG, true), method: 'PUT', url: org('/lock'), body: { enabled: true } },
@@ -66,6 +68,7 @@ const OPERATIONS: Operation[] = [
   { name: 'hyperliquidState', call: (api) => api.hyperliquidState(ORG), method: 'GET', url: org('/hyperliquid/state') },
 
   { name: 'tempoRail', call: (api) => api.tempoRail(ORG), method: 'GET', url: org('/rails/tempo') },
+  { name: 'newTempoAccessKey', call: (api) => api.newTempoAccessKey(ORG), method: 'POST', url: org('/rails/tempo/key'), body: {} },
   { name: 'tempoAuthorization', call: (api) => api.tempoAuthorization(ORG, TERMS), method: 'POST', url: org('/rails/tempo/authorization'), body: WIRE_TERMS },
   {
     name: 'submitTempoAuthorization',
@@ -74,6 +77,8 @@ const OPERATIONS: Operation[] = [
     url: org('/rails/tempo/authorization/submit'),
     body: { terms: WIRE_TERMS, signedWire: '0xabcd' },
   },
+  { name: 'tempoRevoke', call: (api) => api.tempoRevoke(ORG), method: 'POST', url: org('/rails/tempo/revoke'), body: {} },
+  { name: 'submitTempoRevoke', call: (api) => api.submitTempoRevoke(ORG, { signedTransaction: '0x78abcd' }), method: 'POST', url: org('/rails/tempo/revoke/submit'), body: { signedTransaction: '0x78abcd' } },
   { name: 'solanaRail', call: (api) => api.solanaRail(ORG), method: 'GET', url: org('/rails/solana') },
   { name: 'solanaApproval', call: (api) => api.solanaApproval(ORG, 5_000_000n), method: 'POST', url: org('/rails/solana/approval'), body: { amount: '5000000' } },
   { name: 'solanaRevoke', call: (api) => api.solanaRevoke(ORG), method: 'POST', url: org('/rails/solana/revoke'), body: {} },

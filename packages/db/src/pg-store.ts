@@ -422,6 +422,25 @@ export class PgStore implements Store {
     });
   }
 
+  /**
+   * Put `next` in the place of the organisation's active key of its kind,
+   * provided that key is still the one at `retired`. The retired key keeps
+   * its row and is marked revoked. Returns whether anything was written: it is
+   * false when another key is the active one by now, so that two replacements
+   * of the same key leave one new key and not two.
+   */
+  async replaceKey(orgId: string, retired: string, next: NewServiceKey): Promise<boolean> {
+    return this.db.transaction(async (tx) => {
+      await this.lockOrg(tx, orgId);
+      const [active] = await tx
+        .select({ address: keys.address })
+        .from(keys)
+        .where(and(eq(keys.orgId, orgId), eq(keys.kind, next.kind), eq(keys.status, 'active')));
+      if (active === undefined || active.address !== retired) return false;
+      return this.writeKey(tx, orgId, next);
+    });
+  }
+
   /** Every key the organisation has or had, newest first. Secrets are not among what is read. */
   async listKeys(orgId: string): Promise<ServiceKey[]> {
     const rows = await this.db

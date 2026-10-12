@@ -123,14 +123,25 @@ export function verifyPayoutLogs(input: { root: Address; token: Address; lines: 
 }
 
 const KEY_AUTHORIZED_TOPIC = toEventSelector('KeyAuthorized(address,address,uint8,uint64)');
+const KEY_REVOKED_TOPIC = toEventSelector('KeyRevoked(address,address)');
 
-/** Whether a receipt records the keychain provisioning `accessKey` for `root`. */
-export function keyAuthorizedIn(logs: readonly ChainLog[], root: Address, accessKey: Address): boolean {
+/** Whether a receipt holds the keychain's event `topic` about `accessKey` on `root`. */
+function keychainEventIn(logs: readonly ChainLog[], topic: Hex, root: Address, accessKey: Address): boolean {
   return logs.some((log) => {
     const [signature, account, key] = log.topics;
     if (!signature || !account || !key || !isAddressEqual(log.address, Addresses.accountKeychain)) return false;
-    return signature.toLowerCase() === KEY_AUTHORIZED_TOPIC && isAddressEqual(addressOfTopic(account), root) && isAddressEqual(addressOfTopic(key), accessKey);
+    return signature.toLowerCase() === topic && isAddressEqual(addressOfTopic(account), root) && isAddressEqual(addressOfTopic(key), accessKey);
   });
+}
+
+/** Whether a receipt records the keychain provisioning `accessKey` for `root`. */
+export function keyAuthorizedIn(logs: readonly ChainLog[], root: Address, accessKey: Address): boolean {
+  return keychainEventIn(logs, KEY_AUTHORIZED_TOPIC, root, accessKey);
+}
+
+/** Whether a receipt records the keychain revoking `accessKey` on `root`. */
+export function keyRevokedIn(logs: readonly ChainLog[], root: Address, accessKey: Address): boolean {
+  return keychainEventIn(logs, KEY_REVOKED_TOPIC, root, accessKey);
 }
 
 /** Whether two sets of lines pay the same people the same amounts under the same memos. */

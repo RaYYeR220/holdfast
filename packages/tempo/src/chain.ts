@@ -1,4 +1,4 @@
-import type { KeyAuthorization } from 'ox/tempo';
+import type { KeyAuthorization, TxEnvelopeTempo } from 'ox/tempo';
 import type { Address, Hex } from 'viem';
 import type { Call } from './tip20';
 
@@ -19,6 +19,12 @@ export interface TempoChain {
    */
   laneNonce(root: Address, atBlock?: bigint): Promise<number>;
   /**
+   * Next nonce of `root`'s own sequence, nonce key 0, on which a transaction
+   * the root signs itself is numbered. With `atBlock` it is the nonce as of
+   * that block and rejects when the answering node does not have the block.
+   */
+  accountNonce(root: Address, atBlock?: bigint): Promise<number>;
+  /**
    * `TransferWithMemo` logs of the payout token sent by `root` with one of
    * `memos`, over the whole of `fromBlock..toBlock`. Resolves only with a
    * complete answer: every part of the range searched, by a node that had
@@ -31,6 +37,8 @@ export interface TempoChain {
   signPayout(tx: PayoutTx): Promise<SignedTx>;
   /** Signs without asking the node anything, so a transaction that must fail can still be broadcast. */
   signForced(tx: ForcedTx): Promise<SignedTx>;
+  /** Adds the sponsor's signature as fee payer to a revocation the root signed. Asks the node nothing. */
+  signRevocation(tx: RevocationTx): Promise<SignedTx>;
   /** Rejects only when the node could not be reached; a refusal by the node is a result. */
   broadcast(serialized: Hex): Promise<BroadcastResult>;
   /** Revert data of an included, failed transaction; null when the RPC does not serve traces. */
@@ -92,6 +100,18 @@ export interface PayoutTx {
 export interface ForcedTx extends PayoutTx {
   gas: bigint;
   maxFeePerGas: bigint;
+}
+
+/** A `revokeKey` the root of an account signed for a fee payer to pay for. */
+export interface RevocationTx {
+  root: Address;
+  /** The key the transaction takes back. */
+  accessKey: Address;
+  nonce: number;
+  /** Unix seconds; the transaction cannot be included in a block at or after this time. */
+  validBefore: number;
+  /** The transaction with the root's signature and, where the fee payer's goes, the marker that one is to follow. */
+  envelope: TxEnvelopeTempo.Signed;
 }
 
 export interface SignedTx {

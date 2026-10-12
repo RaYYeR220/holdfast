@@ -5,7 +5,7 @@ import * as PublicKey from 'ox/PublicKey';
 import { KeyAuthorization, SignatureEnvelope } from 'ox/tempo';
 import { type Address, type Hex, encodeFunctionData, getAddress, isAddress, toHex } from 'viem';
 import { Abis, Account, Addresses, WebAuthnP256 } from 'viem/tempo';
-import { type Api, type Organisation, type TempoAuthorization, type TempoAuthorizationRequest, type TempoTermsInput, api as defaultApi } from './api';
+import { type Api, type Organisation, type TempoAuthorization, type TempoAuthorizationRequest, type TempoRevocation, type TempoRevokeRequest, type TempoTermsInput, api as defaultApi } from './api';
 import { ClientError, walletError } from './errors';
 
 /**
@@ -348,9 +348,10 @@ export async function authorizeTempoAccessKey(root: Pick<TempoRoot, 'address' | 
 
 /**
  * What the chain needs to know of a transaction besides what it does. The
- * root pays the fee itself, in `feeToken`, and the gas and the fee given here
- * are the most it can be made to pay: they are signed as given, so they are
- * the caller's to bound.
+ * root pays the fee itself, in `feeToken`, unless `feePayer` names who pays
+ * in its place. The gas and the fee given here are the most whoever pays can
+ * be made to pay: they are signed as given, so they are the caller's to
+ * bound.
  */
 export interface TempoRevokeFields {
   chainId: number;
@@ -362,8 +363,14 @@ export interface TempoRevokeFields {
   gas: bigint;
   maxFeePerGas: bigint;
   maxPriorityFeePerGas?: bigint;
-  /** The stablecoin the fee is paid in. */
+  /** The stablecoin the fee is paid in, where the root pays it. */
   feeToken?: string;
+  /**
+   * The account that pays the fee in the root's place. With one named, the
+   * root signs a transaction that is valid only with a fee payer's signature
+   * beside its own, and signs for no fee token: the fee payer names it.
+   */
+  feePayer?: string;
   /** Unix seconds after which the transaction can no longer be included. */
   validBefore?: number;
 }
@@ -371,16 +378,24 @@ export interface TempoRevokeFields {
 /**
  * Sign the transaction with which the root takes an access key back: one
  * call, `revokeKey(accessKey)` on the Account Keychain. A revoked key id can
- * never be authorized again. This signs and does not send: the result is the
- * serialized transaction for `eth_sendRawTransaction`.
+ * never be authorized again. This signs and does not send. Without a fee
+ * payer the result is the serialized transaction for
+ * `eth_sendRawTransaction`. With one it is the same transaction as a sender
+ * hands it to a fee payer: the node takes it once the fee payer has signed
+ * too, and not before. Tempo holds a sender's signature to one or the other,
+ * so a transaction signed here for a fee payer cannot be made to charge the
+ * account, and one signed without cannot be paid for by anyone else.
  */
 export async function signTempoRevoke(root: Pick<TempoRoot, 'address' | 'signTransaction'>, fields: TempoRevokeFields): Promise<Hex> {
   if (!isAddress(fields.accessKey)) throw new ClientError('invalid_argument', `"${fields.accessKey}" is not an access key address`);
   if (fields.feeToken !== undefined && !isAddress(fields.feeToken)) throw new ClientError('invalid_argument', `"${fields.feeToken}" is not a token address`);
+  if (fields.feePayer !== undefined && !isAddress(fields.feePayer)) throw new ClientError('invalid_argument', `"${fields.feePayer}" is not an account address`);
   const call: { to: Address; data: Hex } = {
     to: Addresses.accountKeychain,
     data: encodeFunctionData({ abi: Abis.accountKeychain, functionName: 'revokeKey', args: [getAddress(fields.accessKey)] }),
   };
+  // The sender's signature says only that a fee payer follows; which account that is, and in what token it pays, is the fee payer's own to sign.
+  const payment = fields.feePayer !== undefined ? { feePayer: true as const } : fields.feeToken === undefined ? {} : { feeToken: getAddress(fields.feeToken) };
   try {
     return await root.signTransaction({
       type: 'tempo',
@@ -391,10 +406,58 @@ export async function signTempoRevoke(root: Pick<TempoRoot, 'address' | 'signTra
       maxFeePerGas: fields.maxFeePerGas,
       ...(fields.maxPriorityFeePerGas === undefined ? {} : { maxPriorityFeePerGas: fields.maxPriorityFeePerGas }),
       ...(fields.nonceKey === undefined ? {} : { nonceKey: fields.nonceKey }),
-      ...(fields.feeToken === undefined ? {} : { feeToken: getAddress(fields.feeToken) }),
+      ...payment,
       ...(fields.validBefore === undefined ? {} : { validBefore: fields.validBefore }),
     });
   } catch (error) {
     throw walletError(error, 'signing the revocation');
   }
+}
+
+/** A whole number the server wrote in decimal digits, as amounts and gas travel; null for anything else. */
+function wholeNumber(value: unknown): bigint | null {
+  return typeof value === 'string' && /^(0|[1-9]\d{0,77})$/.test(value) ? BigInt(value) : null;
+}
+
+/**
+ * The fields to sign for a revocation the server prepared. What is revoked,
+ * and on which chain, is this side's to say: the organisation's own access
+ * key, on the chain of its rail, with a fee payer paying. Only the nonce, the
+ * gas, the fee and the deadline are the server's, and under a fee payer none
+ * of them can cost the account anything. A request for another key or
+ * another chain, or one the account would pay for itself, never reaches the
+ * passkey.
+ */
+export function checkedRevokeFields(request: TempoRevokeRequest, grant: Pick<TempoGrant, 'accessKey' | 'chainId'>): TempoRevokeFields {
+  const refuse = (why: string) => new ClientError('unexpected_request', `the revocation the server prepared ${why}; nothing was signed`);
+  if (!Number.isSafeInteger(grant.chainId) || grant.chainId <= 0) throw new ClientError('invalid_argument', `${String(grant.chainId)} is not the id of one chain`);
+  if (!isAddress(grant.accessKey)) throw new ClientError('invalid_argument', `"${grant.accessKey}" is not an access key address`);
+  const fields: Record<string, unknown> = request;
+  if (typeof fields.accessKey !== 'string' || !sameAccount(fields.accessKey, grant.accessKey)) throw refuse('is not for the access key of this organisation');
+  if (fields.chainId !== grant.chainId) throw refuse(`is for chain ${String(fields.chainId)}, and the rail of the organisation is on chain ${grant.chainId}`);
+  if (typeof fields.feePayer !== 'string' || !isAddress(fields.feePayer)) throw refuse('names nobody but the account itself to pay its fee');
+
+  const { nonce, validBefore } = fields;
+  const [nonceKey, gas, maxFeePerGas, maxPriorityFeePerGas] = [fields.nonceKey, fields.gas, fields.maxFeePerGas, fields.maxPriorityFeePerGas].map(wholeNumber);
+  const numbered = typeof nonce === 'number' && Number.isSafeInteger(nonce) && nonce >= 0 && typeof validBefore === 'number' && Number.isSafeInteger(validBefore) && validBefore > 0;
+  if (!numbered || nonceKey == null || gas == null || maxFeePerGas == null || maxPriorityFeePerGas == null) throw refuse('is not a transaction that can be signed');
+  // On a sequence of its own nothing else the account sends would ever use up the nonce of a revocation that was signed and not sent.
+  if (nonceKey !== 0n) throw refuse("is not numbered on the account's own sequence of transactions");
+  return { chainId: grant.chainId, accessKey: getAddress(grant.accessKey), nonce, nonceKey, gas, maxFeePerGas, maxPriorityFeePerGas, feePayer: fields.feePayer, validBefore };
+}
+
+/**
+ * Take the service's access key back from the organisation's Tempo account:
+ * read the rail, ask the server for the revocation as the chain stands now,
+ * sign it with the root, and hand it back. The server adds the signature of
+ * its fee sponsor, which pays for the transaction, sends it, and answers once
+ * the chain shows the key revoked. The account pays nothing and needs to hold
+ * nothing. A revoked key can never be authorized again.
+ */
+export async function revokeTempoAccessKey(root: Pick<TempoRoot, 'address' | 'signTransaction'>, orgId: string, options: TempoFlowOptions = {}): Promise<TempoRevocation> {
+  const api = options.api ?? defaultApi;
+  const grant = await tempoGrant(root.address, orgId, options);
+  const request = await api.tempoRevoke(orgId);
+  const signedTransaction = await signTempoRevoke(root, checkedRevokeFields(request, grant));
+  return api.submitTempoRevoke(orgId, { signedTransaction });
 }

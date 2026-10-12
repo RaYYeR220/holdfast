@@ -14,9 +14,10 @@ import type { NewOrganisation, OrganisationProfile, createOrganisation, listOrga
 import type { receiptOf } from '../server/payouts/receipt';
 import type { createRun, executeRun, listRuns, previewRun, runStatus } from '../server/payouts/service';
 import type { currentAdvisories, previewLock, replacePolicy, setLock } from '../server/policy/service';
-import type { solanaApproval, solanaRail, solanaRevoke, submitTempoAuthorization, tempoAuthorizationRequest, tempoRail } from '../server/rails/service';
+import type { solanaApproval, solanaRail, solanaRevoke, submitTempoAuthorization, submitTempoRevoke, tempoAuthorizationRequest, tempoRail, tempoRevokeRequest } from '../server/rails/service';
 import type { ProbeKind, listRefusals, runProbe, safetyOf } from '../server/safety/service';
 import type { runTick } from '../server/tick/service';
+import type { chainTip } from '../server/zcash/service';
 import { ClientError } from './errors';
 
 export { ClientError, isClientError, isNotFound, isUnauthenticated } from './errors';
@@ -36,6 +37,7 @@ export type SessionInfo = Pick<Session, 'address' | 'expiresAt'>;
 export type OrganisationSummary = Answer<typeof listOrganisations>[number];
 export type Me = SessionInfo & { orgs: OrganisationSummary[] };
 export type Organisation = Answer<typeof readOrganisation>;
+export type ZcashTip = Answer<typeof chainTip>;
 export type PolicyState = Answer<typeof replacePolicy>;
 export type LockPreview = Answer<typeof previewLock>;
 export type Advisories = Answer<typeof currentAdvisories>;
@@ -45,6 +47,8 @@ export type HyperliquidState = Answer<typeof venueState>;
 export type TempoRail = Answer<typeof tempoRail>;
 export type TempoAuthorizationRequest = Answer<typeof tempoAuthorizationRequest>;
 export type TempoAuthorization = Answer<typeof submitTempoAuthorization>;
+export type TempoRevokeRequest = Answer<typeof tempoRevokeRequest>;
+export type TempoRevocation = Answer<typeof submitTempoRevoke>;
 export type SolanaRail = Answer<typeof solanaRail>;
 export type SolanaApproval = Answer<typeof solanaApproval>;
 export type SolanaRevoke = Answer<typeof solanaRevoke>;
@@ -269,6 +273,11 @@ export function createApi(options: ApiOptions = {}) {
     /** PATCH /api/orgs/[orgId]: fields left out stay as they are; null clears. */
     updateOrg: (orgId: string, body: OrganisationProfile, call?: CallOptions) => json<Answer<typeof updateOrganisation>>('PATCH', orgPath(orgId), { ...call, body }),
 
+    // The Zcash chain.
+
+    /** GET /api/zcash/tip: the height of the chain, read now. It is about no organisation; anyone signed in may ask. */
+    zcashTip: (call?: CallOptions) => json<ZcashTip>('GET', '/api/zcash/tip', call),
+
     // The policy and the lock.
 
     /** GET /api/orgs/[orgId]/policy */
@@ -297,11 +306,21 @@ export function createApi(options: ApiOptions = {}) {
 
     /** GET /api/orgs/[orgId]/rails/tempo */
     tempoRail: (orgId: string, call?: CallOptions) => json<TempoRail>('GET', orgPath(orgId, '/rails/tempo'), call),
+    /**
+     * POST /api/orgs/[orgId]/rails/tempo/key: a new access key in the place of one the chain shows as revoked or expired.
+     * The answer is the rail with the new key, which nothing has authorized yet. A key that still works is not replaced.
+     */
+    newTempoAccessKey: (orgId: string, call?: CallOptions) => json<TempoRail>('POST', orgPath(orgId, '/rails/tempo/key'), call),
     /** POST /api/orgs/[orgId]/rails/tempo/authorization: what the root of the Tempo account signs. Changes nothing. */
     tempoAuthorization: (orgId: string, terms: TempoTermsInput, call?: CallOptions) => json<TempoAuthorizationRequest>('POST', orgPath(orgId, '/rails/tempo/authorization'), { ...call, body: terms }),
     /** POST /api/orgs/[orgId]/rails/tempo/authorization/submit: the root's signature, or the authorization signed and serialized. */
     submitTempoAuthorization: (orgId: string, body: { terms: TempoTermsInput } & ({ signature: string } | { signedWire: string }), call?: CallOptions) =>
       json<TempoAuthorization>('POST', orgPath(orgId, '/rails/tempo/authorization/submit'), { ...call, body }),
+    /** POST /api/orgs/[orgId]/rails/tempo/revoke: what the root of the Tempo account signs to take the access key back. Changes nothing. */
+    tempoRevoke: (orgId: string, call?: CallOptions) => json<TempoRevokeRequest>('POST', orgPath(orgId, '/rails/tempo/revoke'), call),
+    /** POST /api/orgs/[orgId]/rails/tempo/revoke/submit: the revocation as the root signed it. The server sends it and answers once the key is revoked on chain. */
+    submitTempoRevoke: (orgId: string, body: { signedTransaction: string }, call?: CallOptions) =>
+      json<TempoRevocation>('POST', orgPath(orgId, '/rails/tempo/revoke/submit'), { ...call, body }),
     /** GET /api/orgs/[orgId]/rails/solana */
     solanaRail: (orgId: string, call?: CallOptions) => json<SolanaRail>('GET', orgPath(orgId, '/rails/solana'), call),
     /** POST /api/orgs/[orgId]/rails/solana/approval: the unsigned approval for the owner's wallet. Changes nothing. */

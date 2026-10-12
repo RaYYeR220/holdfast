@@ -1,10 +1,11 @@
 import { type Address, type Hex, http, keccak256 } from 'viem';
 import { Abis, Account, Addresses, createClient } from 'viem/tempo';
-import type { BroadcastResult, ChainLog, ChainReceipt, ForcedTx, PayoutTx, RawKeyState, SignedTx, TempoChain } from './chain';
+import type { BroadcastResult, ChainLog, ChainReceipt, ForcedTx, PayoutTx, RawKeyState, RevocationTx, SignedTx, TempoChain } from './chain';
 import { type RailSettings, TempoRailError } from './config';
 import { LOG_RANGE, rpcBatchOver, searchMemoLogs } from './log-search';
 import { chainOf } from './networks';
 import { explainError } from './reasons';
+import { sponsorRevocation } from './revocation';
 
 /** JSON-RPC errors that are not a verdict on the transaction: limit exceeded, internal error, too many requests. */
 const UNDECIDED_RPC_CODES = [-32005, -32603, 429];
@@ -137,6 +138,12 @@ export function createViemChain(settings: RailSettings): TempoChain {
       return Number(await reader.nonce.getNonce({ account: root, nonceKey: settings.nonceKey, ...at }));
     },
 
+    async accountNonce(root: Address, atBlock?: bigint): Promise<number> {
+      // Nonce key 0 is the account's ordinary nonce: the node keeps it with the account, not in the nonce precompile.
+      const at = atBlock === undefined ? {} : { blockNumber: atBlock };
+      return reader.getTransactionCount({ address: root, ...at });
+    },
+
     async memoLogs({ root, memos, fromBlock, toBlock }): Promise<ChainLog[]> {
       const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
       const found = await searchMemoLogs({ rpc: batch, token: settings.token, root, memos, fromBlock, toBlock, sleep, span: logRange });
@@ -174,6 +181,11 @@ export function createViemChain(settings: RailSettings): TempoChain {
         type: 'tempo',
       });
       return signed(serialized);
+    },
+
+    signRevocation(tx: RevocationTx): Promise<SignedTx> {
+      // The sponsor signs for this sender and this fee token; the root's signature covers neither.
+      return sponsorRevocation({ envelope: tx.envelope, root: tx.root, feeToken: settings.feeToken, sponsor });
     },
 
     async broadcast(serialized: Hex): Promise<BroadcastResult> {

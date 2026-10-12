@@ -121,11 +121,17 @@ export interface ApproveAgentOptions {
   /** When the approval lapses, in ms. Hyperliquid allows at most 180 days ahead. */
   validUntil?: number;
   /**
-   * Which Hyperliquid this deployment trades on, where the page knows it. The
-   * server says nowhere else which it is, so without this the approval is
-   * signed for the network the server names, which the wallet shows.
+   * Which Hyperliquid the approval may be for, in place of the one the
+   * organisation says its deployment trades on. A page has no need of it.
    */
   network?: HyperliquidNetwork;
+}
+
+/** The Hyperliquid a deployment trades on, as Hyperliquid writes it; null for what names neither. */
+function hyperliquidNetworkOf(network: unknown): HyperliquidNetwork | null {
+  if (network === 'mainnet') return 'Mainnet';
+  if (network === 'testnet') return 'Testnet';
+  return null;
 }
 
 /**
@@ -145,6 +151,10 @@ export interface ApproveAgentOptions {
  * else. That is settled before the wallet is opened, the wallet is asked to
  * sign as that account by name, and the signature leaves this side only if
  * it is that account's.
+ *
+ * The approval is signed for one Hyperliquid only: the one the organisation
+ * says its deployment trades on. An approval the server prepared for the
+ * other never reaches the wallet.
  */
 export async function approveHyperliquidAgent(connection: EvmConnection, orgId: string, options: ApproveAgentOptions = {}): Promise<HyperliquidApproval> {
   const api = options.api ?? defaultApi;
@@ -154,14 +164,17 @@ export async function approveHyperliquidAgent(connection: EvmConnection, orgId: 
     throw new ClientError('wrong_account', `the wallet holds ${address ?? 'no account'}, and the approval has to be signed by ${org.owner}, which owns the organisation`);
   }
 
+  const network = options.network ?? hyperliquidNetworkOf(org.network);
+  if (network === null) throw new ClientError('unexpected_request', 'the organisation does not say which Hyperliquid its deployment trades on; nothing was signed');
+
   const chainId = await connection.readChainId();
-  const { validUntil, network } = options;
+  const { validUntil } = options;
   const request = await api.hyperliquidApproval(orgId, { chainId, ...(validUntil === undefined ? {} : { validUntil }) });
   const agent = org.serviceKeys.find((key) => key.kind === 'hl_agent');
   if (agent === undefined || !sameAddress(agent.address, request.agentAddress)) {
     throw new ClientError('unexpected_request', 'the approval the server prepared is not for the agent key of this organisation; nothing was signed');
   }
-  const typedData = checkedApprovalTypedData(request, { chainId, ...(validUntil === undefined ? {} : { validUntil }), ...(network === undefined ? {} : { network }) });
+  const typedData = checkedApprovalTypedData(request, { chainId, ...(validUntil === undefined ? {} : { validUntil }), network });
 
   const signature = await connection.signTypedData(typedData, org.owner);
   let signedBy: string;

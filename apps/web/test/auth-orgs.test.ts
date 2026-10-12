@@ -177,6 +177,7 @@ describe('organisations', () => {
       name: 'Acme Labs',
       createdAt: w.clock.ms,
       owner: owner.address.toLowerCase(),
+      network: 'mainnet',
       birthday: 3_512_000,
       scannedTo: null,
       lockEnabled: false,
@@ -221,6 +222,24 @@ describe('organisations', () => {
     // Two organisations made in the same instant are listed in the order of their ids, so only membership is asserted.
     expect(mine.body.orgs.map((org: { id: string }) => org.id).sort()).toEqual([first.id, second.id].sort());
     expect((await call(w, getMe, 'GET', { cookie })).body.orgs).toEqual(mine.body.orgs);
+  });
+
+  it('say which network the deployment is on, the same when read, registered and changed', async () => {
+    const owner = newAccount();
+    const cookie = await sessionOf(w, owner.address);
+    const org = await organisation(w, owner.address);
+    const params = { orgId: org.id };
+    expect((await call(w, getOrg, 'GET', { cookie, params })).body.network).toBe('mainnet');
+    expect((await call(w, patchOrg, 'PATCH', { cookie, params, body: { name: 'Acme Research' } })).body.network).toBe('mainnet');
+
+    // The same organisations behind a deployment set to testnet: the network is the deployment's, not a property of the row.
+    const testnet: World = { ...w, deps: { ...w.deps, network: 'testnet' } };
+    expect((await call(testnet, getOrg, 'GET', { cookie, params })).body.network).toBe('testnet');
+    expect((await call(testnet, patchOrg, 'PATCH', { cookie, params, body: {} })).body.network).toBe('testnet');
+    expect((await call(testnet, postOrg, 'POST', { cookie, body: input })).body.network).toBe('testnet');
+    // Nobody sets it from outside.
+    expect((await call(w, patchOrg, 'PATCH', { cookie, params, body: { network: 'testnet' } })).status).toBe(400);
+    expect((await call(w, postOrg, 'POST', { cookie, body: { ...input, network: 'testnet' } })).status).toBe(400);
   });
 
   it('cannot be created, listed, read or changed without a session', async () => {

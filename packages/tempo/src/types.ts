@@ -2,6 +2,7 @@ import type { PayoutLine, PayoutRail, PayoutResult } from '@holdfast/core';
 import type { Address, Hex } from 'viem';
 import type { AccessKeyPolicyInput } from './authorization';
 import type { TempoNetwork } from './networks';
+import type { RevocationRequest } from './revocation';
 
 export interface TempoRailConfig {
   network: TempoNetwork;
@@ -120,6 +121,36 @@ export interface TempoPayoutRail extends PayoutRail {
   probeOutOfScope(i: { account: string; to: string }): Promise<ProbeResult>;
   /** Provisions the access key from a root-signed authorization; the sponsor pays. */
   submitAuthorization(i: SubmitAuthorizationInput): Promise<TempoPayoutResult>;
+  /**
+   * What the root of `account` signs to take the access key back, as the
+   * chain stands now, or why there is nothing to sign. Sends nothing. Rejects
+   * when the chain cannot be read.
+   */
+  prepareRevocation(account: string): Promise<RevocationPreparation>;
+  /**
+   * Sends a revocation the root signed, with the sponsor paying, if it is the
+   * revocation of this rail's key by the root of `account` and nothing else.
+   * Never rejects.
+   */
+  submitRevocation(i: SubmitRevocationInput): Promise<RevocationResult>;
+}
+
+export type RevocationPreparation = { ok: true; request: RevocationRequest } | { ok: false; problems: string[] };
+
+export interface SubmitRevocationInput {
+  /** The account whose root signed the transaction. */
+  account: string;
+  /** The transaction as the root signed it for a fee payer: what `root.signTransaction` returns for a request with `feePayer: true`. */
+  signedTransaction: Hex;
+}
+
+export interface RevocationResult {
+  /** True only when the receipt on chain shows the keychain revoking the key. */
+  ok: boolean;
+  /** Hash of the transaction this result is about; null when nothing reached the chain. */
+  tx: Hex | null;
+  error: string | null;
+  gasUsed: bigint | null;
 }
 
 export interface SubmitAuthorizationInput {

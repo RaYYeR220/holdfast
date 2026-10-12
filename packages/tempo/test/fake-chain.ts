@@ -1,5 +1,5 @@
 import { KeyAuthorization } from 'ox/tempo';
-import { type Address, type Hex, decodeFunctionData, encodeEventTopics, isAddressEqual, keccak256, pad, toHex } from 'viem';
+import { type Address, type Hex, decodeFunctionData, encodeErrorResult, encodeEventTopics, isAddressEqual, keccak256, pad, toHex } from 'viem';
 import { generatePrivateKey, privateKeyToAddress } from 'viem/accounts';
 import { Abis, Account, Addresses } from 'viem/tempo';
 import {
@@ -12,6 +12,8 @@ import {
   type ForcedTx,
   type PayoutTx,
   type RawKeyState,
+  type RevocationRequest,
+  type RevocationTx,
   SPENDING_LIMIT_EXCEEDED,
   type SignedTx,
   TOKENS,
@@ -21,6 +23,7 @@ import {
   type TempoChain,
   type TempoRailConfig,
   buildAccessKeyAuthorization,
+  buildRevoke,
   createTempoPayoutRail,
   generateAccessKey,
   readSignedAuthorization,
@@ -41,6 +44,9 @@ export const START = 1_791_640_000;
 
 const ZERO: Address = '0x0000000000000000000000000000000000000000';
 const KEY_AUTHORIZED_TOPIC = encodeEventTopics({ abi: Abis.accountKeychain, eventName: 'KeyAuthorized' })[0] as Hex;
+const KEY_REVOKED_TOPIC = encodeEventTopics({ abi: Abis.accountKeychain, eventName: 'KeyRevoked' })[0] as Hex;
+/** What the keychain answers a `revokeKey` for a key the account does not hold. */
+export const KEY_NOT_FOUND = encodeErrorResult({ abi: Abis.accountKeychain, errorName: 'KeyNotFound' });
 
 type Decoded = { kind: 'memo'; to: Address; amount: bigint; memo: Hex } | { kind: 'plain'; to: Address; amount: bigint } | { kind: 'other' };
 
@@ -72,7 +78,9 @@ export class FakeChain implements TempoChain {
   /** Seconds the clock moves each time the head is read. */
   tick = 1;
   wrongChain = false;
-  /** The key as the keychain holds it for `ROOT`; every other account has never seen it. */
+  /** The account the key is held on: `ROOT` unless a test puts another in its place. */
+  account: Address = ROOT;
+  /** The key as the keychain holds it for `account`; every other account has never seen it. */
   key: RawKeyState;
   rootBalance = 1_000_000_000n;
   sponsorBalance = 1_000_000_000n;
@@ -83,14 +91,19 @@ export class FakeChain implements TempoChain {
   servesTraces = true;
   failing = new Set<keyof TempoChain>();
   readonly signed: PayoutTx[] = [];
+  /** The revocations the sponsor was asked to sign for, in order. */
+  readonly revocations: RevocationTx[] = [];
   readonly broadcasts: Hex[] = [];
   readonly receipts = new Map<Hex, ChainReceipt>();
   /** The block every nonce read was pinned to; null for an unpinned read. */
   readonly nonceReads: (bigint | null)[] = [];
   readonly searches: { fromBlock: bigint; toBlock: bigint }[] = [];
   private readonly built = new Map<Hex, { tx: PayoutTx; hash: Hex }>();
+  private readonly builtRevocations = new Map<Hex, { tx: RevocationTx; hash: Hex }>();
   private readonly reverts = new Map<Hex, Hex>();
   private readonly lane: { block: bigint; nonce: number }[] = [{ block: 0n, nonce: 0 }];
+  /** The account's own nonce sequence, which only what the root signs itself moves. */
+  private readonly own: { block: bigint; nonce: number }[] = [{ block: 0n, nonce: 0 }];
   private logs: ChainLog[] = [];
   private logIndex = 0;
 
@@ -120,6 +133,16 @@ export class FakeChain implements TempoChain {
     this.lane.push({ block: this.block, nonce: this.nonce + 1 });
   }
 
+  get ownNonce(): number {
+    return this.own[this.own.length - 1]?.nonce ?? 0;
+  }
+
+  /** The root sends something of its own in a new block. */
+  useOwnNonce(): void {
+    this.block += 1n;
+    this.own.push({ block: this.block, nonce: this.ownNonce + 1 });
+  }
+
   revoke(): void {
     this.key = { ...this.key, keyId: ZERO, expiry: 0n, isRevoked: true, remaining: 0n, periodEnd: 0n, scopes: [] };
   }
@@ -146,14 +169,14 @@ export class FakeChain implements TempoChain {
 
   async keyState(root: Address): Promise<RawKeyState> {
     this.guard('keyState');
-    if (!isAddressEqual(root, ROOT)) return { keyId: ZERO, expiry: 0n, enforceLimits: false, isRevoked: false, remaining: 0n, periodEnd: 0n, isScoped: true, scopes: [] };
+    if (!isAddressEqual(root, this.account)) return { keyId: ZERO, expiry: 0n, enforceLimits: false, isRevoked: false, remaining: 0n, periodEnd: 0n, isScoped: true, scopes: [] };
     const expired = this.key.expiry <= BigInt(this.time);
     return expired ? { ...this.key, remaining: 0n, periodEnd: 0n } : this.key;
   }
 
   async balanceOf(_token: Address, owner: Address): Promise<bigint> {
     this.guard('balanceOf');
-    if (isAddressEqual(owner, ROOT)) return this.rootBalance;
+    if (isAddressEqual(owner, this.account)) return this.rootBalance;
     return isAddressEqual(owner, this.sponsor) ? this.sponsorBalance : 0n;
   }
 
@@ -163,6 +186,13 @@ export class FakeChain implements TempoChain {
     if (atBlock === undefined) return this.nonce;
     if (atBlock > this.block) throw nodeError(`block not found: 0x${atBlock.toString(16)}`, -32001);
     return [...this.lane].reverse().find((entry) => entry.block <= atBlock)?.nonce ?? 0;
+  }
+
+  async accountNonce(_root: Address, atBlock?: bigint): Promise<number> {
+    this.guard('accountNonce');
+    if (atBlock === undefined) return this.ownNonce;
+    if (atBlock > this.block) throw nodeError(`block not found: 0x${atBlock.toString(16)}`, -32001);
+    return [...this.own].reverse().find((entry) => entry.block <= atBlock)?.nonce ?? 0;
   }
 
   async memoLogs(query: { root: Address; memos: Hex[]; fromBlock: bigint; toBlock: bigint }): Promise<ChainLog[]> {
@@ -227,6 +257,45 @@ export class FakeChain implements TempoChain {
     return this.build(tx);
   }
 
+  async signRevocation(tx: RevocationTx): Promise<SignedTx> {
+    this.guard('signRevocation');
+    const serialized = toHex(`revocation-${this.revocations.length}-${tx.nonce}-${tx.validBefore}`);
+    const hash = keccak256(serialized);
+    this.revocations.push(tx);
+    this.builtRevocations.set(serialized, { tx, hash });
+    return { serialized, hash };
+  }
+
+  /** The keychain takes a key back from the account that holds it, and reverts for any other. */
+  private mineRevocation(hash: Hex, tx: RevocationTx): void {
+    this.useOwnNonce();
+    const held = isAddressEqual(tx.root, this.account) && isAddressEqual(this.key.keyId, tx.accessKey) && !this.key.isRevoked;
+    let logs: ChainLog[] = [];
+    if (held) {
+      this.revoke();
+      const topics = [KEY_REVOKED_TOPIC, pad(tx.root).toLowerCase() as Hex, pad(tx.accessKey).toLowerCase() as Hex];
+      logs = [{ address: Addresses.accountKeychain, topics, data: '0x', transactionHash: hash, blockNumber: this.block, logIndex: this.logIndex++ }];
+    } else {
+      this.reverts.set(hash, KEY_NOT_FOUND);
+    }
+    if (this.tamper) {
+      logs = this.tamper(logs);
+      this.tamper = null;
+    }
+    this.logs.push(...logs);
+    this.receipts.set(hash, { status: held ? 'success' : 'reverted', blockNumber: this.block, gasUsed: 285_944n, logs });
+  }
+
+  private broadcastRevocation(built: { tx: RevocationTx; hash: Hex }): BroadcastResult {
+    this.broadcasts.push(built.hash);
+    if (this.onBroadcast === 'unreachable') throw new Error('fetch failed');
+    if (built.tx.nonce !== this.ownNonce) return { accepted: false, reason: `nonce too low: next nonce ${this.ownNonce}, tx nonce ${built.tx.nonce}` };
+    if (this.onBroadcast === 'drop') return { accepted: true };
+    if (built.tx.validBefore > this.time) this.mineRevocation(built.hash, built.tx);
+    if (this.onBroadcast === 'lost') throw new Error('fetch failed');
+    return { accepted: true };
+  }
+
   /** Stores the key a transaction carries and returns the event the keychain emits for it. */
   private provision(tx: PayoutTx, hash: Hex): ChainLog[] {
     if (!tx.keyAuthorization) return [];
@@ -275,6 +344,8 @@ export class FakeChain implements TempoChain {
 
   async broadcast(serialized: Hex): Promise<BroadcastResult> {
     this.guard('broadcast');
+    const revocation = this.builtRevocations.get(serialized);
+    if (revocation) return this.broadcastRevocation(revocation);
     const built = this.built.get(serialized);
     if (!built) throw new Error('unknown transaction bytes');
     this.broadcasts.push(built.hash);
@@ -318,4 +389,26 @@ export function policyFor(accessKeyAddress: Address, over: Partial<AccessKeyPoli
 export async function signAuthorization(expected: AccessKeyPolicyInput, signer: { sign: (i: { hash: Hex }) => Promise<Hex> } = ROOT_ACCOUNT): Promise<Hex> {
   const request = buildAccessKeyAuthorization(expected);
   return serializeSignedAuthorization(request.authorization, await signer.sign({ hash: request.signPayload }));
+}
+
+/**
+ * A revocation signed the way a wallet signs one with the SDK: one
+ * `revokeKey` call, for a fee payer to pay for. `over` changes what is signed,
+ * for transactions that are something other than what was prepared.
+ */
+export async function signRevocation(request: RevocationRequest, signer: Pick<typeof ROOT_ACCOUNT, 'signTransaction'> = ROOT_ACCOUNT, over: Record<string, unknown> = {}): Promise<Hex> {
+  const transaction = {
+    type: 'tempo',
+    chainId: request.chainId,
+    calls: [buildRevoke({ accessKeyAddress: request.accessKey })],
+    nonce: request.nonce,
+    nonceKey: request.nonceKey,
+    gas: request.gas,
+    maxFeePerGas: request.maxFeePerGas,
+    maxPriorityFeePerGas: request.maxPriorityFeePerGas,
+    validBefore: request.validBefore,
+    feePayer: true,
+    ...over,
+  };
+  return signer.signTransaction(transaction as Parameters<typeof ROOT_ACCOUNT.signTransaction>[0]);
 }

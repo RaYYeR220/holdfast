@@ -1,6 +1,6 @@
 import { hedgeAttestorAbi } from '@holdfast/attest';
 import type { PgliteConnection } from '@holdfast/db';
-import { readSignedAuthorization } from '@holdfast/tempo';
+import { generateAccessKey, readSignedAuthorization, revocationSignPayload } from '@holdfast/tempo';
 import { parsePaymentUri } from '@holdfast/zcash';
 import { getWallets } from '@wallet-standard/app';
 import { decodeFunctionData, encodeFunctionData, erc20Abi, getAddress } from 'viem';
@@ -14,7 +14,7 @@ import { encodeQr } from '../../src/client/qr';
 import { readSession, signIn, signOut } from '../../src/client/session';
 import { type SolanaWallet, approveSolanaDelegate, base58Encode, connectSolanaWallet, readSolanaTransaction, revokeSolanaDelegate, waitForSolanaAllowance, watchSolanaWallets } from '../../src/client/solana';
 import { createSessionStore } from '../../src/client/stores';
-import { authorizeTempoAccessKey, createTempoAccount, signTempoAuthorization, storedPasskey, tempoGrant, tempoRoot } from '../../src/client/tempo';
+import { authorizeTempoAccessKey, checkedRevokeFields, createTempoAccount, revokeTempoAccessKey, signTempoAuthorization, signTempoRevoke, storedPasskey, tempoGrant, tempoRoot } from '../../src/client/tempo';
 import { zcashPaymentRequest } from '../../src/client/zcash';
 import { solanaPort } from '../../src/server/adapters/solana';
 import { buildDelegateApproval, buildDelegateRevoke } from '../../src/server/adapters/solana-package.js';
@@ -248,6 +248,35 @@ describe('approving the Hyperliquid agent', () => {
     expect(w.exchange.calls).toEqual([]);
   });
 
+  it('signs for the Hyperliquid the organisation’s deployment is on, with no word from the page', async () => {
+    const { provider, connection, api, served, org } = await withOrganisation();
+    expect(org.network).toBe('mainnet');
+
+    // The organisation says testnet, and the approval the server prepared is for mainnet: it is not signed.
+    w.deps.network = 'testnet';
+    const other = await failure(approveHyperliquidAgent(connection, org.id, { api }));
+    expect({ code: other.code, message: other.message }).toEqual({ code: 'unexpected_request', message: 'the approval the server prepared is for Hyperliquid Mainnet, not Testnet; nothing was signed' });
+    w.deps.network = 'mainnet';
+
+    // An organisation that names no network is not signed for on the strength of what the approval itself says.
+    const silent = createApi({
+      fetch: async (input, init) => {
+        const response = await served.fetch(input, init);
+        if (String(input) !== `/api/orgs/${org.id}`) return response;
+        const { network: _, ...rest } = (await response.json()) as Record<string, unknown>;
+        return Response.json(rest);
+      },
+    });
+    const unnamed = await failure(approveHyperliquidAgent(connection, org.id, { api: silent }));
+    expect({ code: unnamed.code, message: unnamed.message }).toEqual({ code: 'unexpected_request', message: 'the organisation does not say which Hyperliquid its deployment trades on; nothing was signed' });
+    expect(provider.count('eth_signTypedData_v4')).toBe(0);
+    expect(w.exchange.calls).toEqual([]);
+
+    expect(await approveHyperliquidAgent(connection, org.id, { api })).toMatchObject({ approved: true });
+    expect(w.exchange.calls).toHaveLength(1);
+    expect(w.exchange.calls[0]).toMatchObject({ action: { type: 'approveAgent', hyperliquidChain: 'Mainnet' } });
+  });
+
   it('signs for the Hyperliquid the page says it is on, where the page knows', async () => {
     const { provider, connection, api, org } = await withOrganisation();
     // The world runs on mainnet.
@@ -329,6 +358,149 @@ describe('the Tempo account and its access key', () => {
     // Terms the server will not build an authorization for never reach the passkey: an expiry given in milliseconds.
     await expect(authorizeTempoAccessKey(root, org.id, { ...TERMS, expiry: (START + 86_400) * 1_000 }, { api })).rejects.toMatchObject({ status: 400, code: 'invalid_input' });
     expect(authenticator.asserted).toHaveLength(before);
+  });
+
+  /** A treasurer whose passkey account has authorized the organisation's access key, over a chain that holds the key on that account. */
+  async function withAuthorizedKey() {
+    vi.stubGlobal('window', fakeWindow(ORIGIN));
+    const authenticator = softwareAuthenticator(ORIGIN);
+    const t = await withOrganisation();
+    const { passkey } = await createTempoAccount(t.org.id, { label: 'Acme Labs payroll', createFn: authenticator.createFn, api: t.api });
+    const accessKey = await keyAddress(w, t.org.id, 'tempo_access');
+    const chain = w.tempoChain(accessKey);
+    chain.account = passkey.address;
+    chain.forget();
+    const root = tempoRoot(passkey, { getFn: authenticator.getFn });
+    await authorizeTempoAccessKey(root, t.org.id, TERMS, { api: t.api });
+    expect((await t.api.tempoRail(t.org.id)).key).toMatchObject({ status: 'ok', value: { authorized: true, revoked: false } });
+    return { ...t, authenticator, passkey, root, accessKey, chain };
+  }
+
+  it('takes the access key back with one passkey signature, the service paying, and reads it revoked from the chain', async () => {
+    const { api, served, org, authenticator, passkey, root, accessKey, chain } = await withAuthorizedKey();
+    const prompts = authenticator.asserted.length;
+    const sentBefore = chain.broadcasts.length;
+
+    const revoked = await revokeTempoAccessKey(root, org.id, { api });
+    expect(revoked).toEqual({ tx: expect.stringMatching(/^0x[0-9a-f]{64}$/), txUrl: `https://explore.testnet.tempo.xyz/tx/${revoked.tx}` });
+    expect(served.calls.slice(-2).map((call) => `${call.method} ${call.pattern} ${call.status}`)).toEqual([
+      'POST /api/orgs/[orgId]/rails/tempo/revoke 200',
+      'POST /api/orgs/[orgId]/rails/tempo/revoke/submit 200',
+    ]);
+    expect(served.calls.at(-1)?.body).toEqual({ signedTransaction: expect.stringMatching(/^0x78[0-9a-f]+$/) });
+
+    // One transaction went to the chain, for this account and this key, and the sponsor signed for nothing else.
+    expect(chain.broadcasts).toHaveLength(sentBefore + 1);
+    expect(chain.broadcasts.at(-1)).toBe(revoked.tx);
+    const [sent] = chain.revocations;
+    if (sent === undefined) throw new Error('nothing was handed to the sponsor');
+    expect(chain.revocations).toHaveLength(1);
+    expect(sent).toMatchObject({ root: passkey.address, accessKey, nonce: 0, envelope: { signature: { type: 'webAuthn' } } });
+
+    // One prompt, for this credential on this site, over the digest of the revocation of the organisation's key.
+    expect(authenticator.asserted).toHaveLength(prompts + 1);
+    expect(authenticator.asserted.at(-1)).toMatchObject({ rpId: 'app.holdfast.test', credentialId: passkey.credentialId });
+    const digest = revocationSignPayload({ chainId: 42_431, accessKey: accessKey as `0x${string}`, nonce: 0, gas: 600_000n, maxFeePerGas: 1_200_000_000n, maxPriorityFeePerGas: 1n, validBefore: sent.validBefore });
+    expect(`0x${Buffer.from(authenticator.asserted.at(-1)?.challenge ?? []).toString('hex')}`).toBe(digest);
+
+    // The server's word is not taken for it either: the rail reads the key from the chain.
+    expect((await api.tempoRail(org.id)).key).toMatchObject({ status: 'ok', source: 'tempo', value: { accessKey, revoked: true, authorized: false, live: false } });
+
+    // There is nothing to revoke a second time, and the passkey is not asked.
+    const again = await failure(revokeTempoAccessKey(root, org.id, { api }));
+    expect({ status: again.status, code: again.code, message: again.message }).toEqual({ status: 409, code: 'refused', message: `access key ${accessKey} is already revoked on this account; there is nothing to revoke` });
+    expect(authenticator.asserted).toHaveLength(prompts + 1);
+    expect(chain.broadcasts).toHaveLength(sentBefore + 1);
+  });
+
+  it('signs no revocation but that of the organisation’s own key, and the server sends none that is anything else', async () => {
+    const { api, served, org, authenticator, passkey, root, accessKey, chain } = await withAuthorizedKey();
+    const prompts = authenticator.asserted.length;
+    const sentBefore = chain.broadcasts.length;
+    const another = generateAccessKey().address;
+
+    // The application as it is, but for the key its revocation names: the passkey is never asked.
+    const lying = createApi({
+      fetch: async (input, init) => {
+        const response = await served.fetch(input, init);
+        if (!String(input).endsWith('/rails/tempo/revoke')) return response;
+        return Response.json({ ...((await response.json()) as object), accessKey: another });
+      },
+    });
+    const unsigned = await failure(revokeTempoAccessKey(root, org.id, { api: lying }));
+    expect({ code: unsigned.code, message: unsigned.message }).toEqual({ code: 'unexpected_request', message: 'the revocation the server prepared is not for the access key of this organisation; nothing was signed' });
+    expect(authenticator.asserted).toHaveLength(prompts);
+
+    // What the passkey can be made to sign outside the flow, the server does not send.
+    const fields = checkedRevokeFields(await api.tempoRevoke(org.id), await tempoGrant(passkey.address, org.id, { api }));
+    const otherKey = await failure(api.submitTempoRevoke(org.id, { signedTransaction: await signTempoRevoke(root, { ...fields, accessKey: another }) }));
+    expect({ status: otherKey.status, code: otherKey.code, message: otherKey.message }).toEqual({ status: 409, code: 'refused', message: `the transaction revokes key ${another}, this rail's key is ${accessKey}` });
+
+    const { feePayer: _, ...selfPaid } = fields;
+    const unsponsored = await failure(api.submitTempoRevoke(org.id, { signedTransaction: await signTempoRevoke(root, { ...selfPaid, feeToken: w.deps.tempo.token }) }));
+    expect(unsponsored.message).toBe('the transaction is signed for the account to pay the fee itself, not for the fee sponsor to pay it');
+
+    // Another passkey of the same treasurer signs the very revocation: it is not the root of this account.
+    const other = await createTempoAccount('some-other-organisation', { label: 'Other', createFn: authenticator.createFn, api: createApi({ fetch: async () => Response.json({ tempoAccount: null }) }) });
+    const forged = await failure(api.submitTempoRevoke(org.id, { signedTransaction: await signTempoRevoke(tempoRoot(other.passkey, { getFn: authenticator.getFn }), fields) }));
+    expect({ status: forged.status, message: forged.message }).toEqual({ status: 409, message: `the transaction is sent by ${other.passkey.address}, not by ${passkey.address}` });
+    // And the flow itself does not let that passkey try.
+    expect((await failure(revokeTempoAccessKey(tempoRoot(other.passkey, { getFn: authenticator.getFn }), org.id, { api }))).code).toBe('wrong_account');
+
+    expect([chain.revocations, chain.broadcasts.length]).toEqual([[], sentBefore]);
+    expect((await api.tempoRail(org.id)).key).toMatchObject({ status: 'ok', value: { authorized: true, revoked: false } });
+  });
+
+  it('is given a new access key once the old one is dead, and authorizes that one with the same passkey', async () => {
+    const { api, org, passkey, root, accessKey, chain } = await withAuthorizedKey();
+    // While the key works there is no other to be had.
+    const early = await failure(api.newTempoAccessKey(org.id));
+    expect({ status: early.status, code: early.code, message: early.message }).toEqual({ status: 409, code: 'refused', message: `access key ${accessKey} is authorized on this account and can still pay; revoke it before a new key takes its place` });
+    await revokeTempoAccessKey(root, org.id, { api });
+    const sentWithOldKey = chain.broadcasts.length;
+
+    // A key made from here on is new to the chain, which holds keys on the passkey's account.
+    const make = w.deps.tempo.newAccessKey;
+    w.deps.tempo.newAccessKey = () => {
+      const key = make();
+      const itsChain = w.tempoChain(key.address);
+      itsChain.account = passkey.address;
+      itsChain.forget();
+      return key;
+    };
+
+    const rail = await api.newTempoAccessKey(org.id);
+    const fresh = rail.accessKey;
+    if (fresh === null) throw new Error('the rail names no access key');
+    expect(fresh).not.toBe(accessKey);
+    expect(rail).toMatchObject({ account: passkey.address, key: { status: 'ok', source: 'tempo', value: { accessKey: fresh, authorized: false, live: false, revoked: false, remaining: '0' } } });
+    expect(await api.tempoRail(org.id)).toEqual(rail);
+    expect((await api.getOrg(org.id)).serviceKeys.filter((key) => key.kind === 'tempo_access')).toEqual([{ kind: 'tempo_access', address: fresh }]);
+
+    // The root authorizes the new key as it did the first, and what it signs names the new key.
+    expect(await tempoGrant(passkey.address, org.id, { api })).toMatchObject({ accessKey: fresh });
+    expect(await authorizeTempoAccessKey(root, org.id, TERMS, { api })).toMatchObject({ authorized: true, sent: true });
+    expect(w.tempoChain(fresh).signed[0]?.keyAuthorization).toMatchObject({ address: fresh.toLowerCase(), signature: { type: 'webAuthn' } });
+    expect((await api.tempoRail(org.id)).key).toMatchObject({ status: 'ok', value: { accessKey: fresh, authorized: true, revoked: false, remaining: '10000000' } });
+    // The retired key sent nothing more, and a key that works is not replaced a second time.
+    expect(chain.broadcasts).toHaveLength(sentWithOldKey);
+    expect((await failure(api.newTempoAccessKey(org.id))).code).toBe('refused');
+  });
+
+  it('is refused for somebody else’s organisation the way the server refuses it', async () => {
+    const owner = await withAuthorizedKey();
+    const stranger = await treasurer();
+    await signIn(stranger.connection, { api: stranger.api, origin: ORIGIN, now: w.clock.now });
+    const error = await failure(revokeTempoAccessKey(owner.root, owner.org.id, { api: stranger.api }));
+    expect({ status: error.status, code: error.code }).toEqual({ status: 404, code: 'not_found' });
+    for (const refused of [
+      await failure(stranger.api.tempoRevoke(owner.org.id)),
+      await failure(stranger.api.submitTempoRevoke(owner.org.id, { signedTransaction: '0x78abcd' })),
+      await failure(stranger.api.newTempoAccessKey(owner.org.id)),
+    ]) {
+      expect({ status: refused.status, code: refused.code, message: refused.message }).toEqual({ status: 404, code: 'not_found', message: 'not found' });
+    }
+    expect(owner.chain.revocations).toEqual([]);
   });
 });
 

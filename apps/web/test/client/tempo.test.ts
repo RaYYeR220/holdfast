@@ -1,9 +1,20 @@
-import { TOKENS, type AccessKeyPolicyInput, buildAccessKeyAuthorization, buildRevoke, generateAccessKey, readSignedAuthorization, verifySignedAuthorization } from '@holdfast/tempo';
+import {
+  TOKENS,
+  type AccessKeyPolicyInput,
+  buildAccessKeyAuthorization,
+  buildRevocation,
+  buildRevoke,
+  generateAccessKey,
+  readSignedAuthorization,
+  revocationSignPayload,
+  verifySignedAuthorization,
+  verifySignedRevocation,
+} from '@holdfast/tempo';
 import { KeyAuthorization, SignatureEnvelope } from 'ox/tempo';
 import { type Address, type Hex, getAddress, keccak256 } from 'viem';
 import { Account, P256, Transaction } from 'viem/tempo';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { type TempoAuthorizationRequest, type TempoTermsInput, createApi } from '../../src/client/api';
+import { type TempoAuthorizationRequest, type TempoRevokeRequest, type TempoTermsInput, createApi } from '../../src/client/api';
 import { ClientError } from '../../src/client/errors';
 import { tempoAccountState } from '../../src/client/stores';
 import {
@@ -11,6 +22,7 @@ import {
   type TempoGrant,
   authorizeTempoAccessKey,
   buildAuthorization,
+  checkedRevokeFields,
   createPasskey,
   createTempoAccount,
   forgetPasskey,
@@ -18,6 +30,7 @@ import {
   passkeysSupported,
   pendingPasskey,
   recoverPasskey,
+  revokeTempoAccessKey,
   signTempoAuthorization,
   signTempoRevoke,
   storedPasskey,
@@ -579,5 +592,190 @@ describe('revoking the access key', () => {
       },
     };
     expect((await failure(signTempoRevoke(declining as never, FIELDS))).code).toBe('wallet_rejected');
+    expect((await failure(signTempoRevoke(root, { ...FIELDS, feePayer: 'the-service' }))).code).toBe('invalid_argument');
+  });
+
+  const SPONSOR: Address = '0x90F79bf6EB2c4f870365E785982E1f101E93b906';
+  /** The revocation as the server's package prepares it, and as it arrives from `POST …/rails/tempo/revoke`. */
+  const PREPARED = buildRevocation({ accessKeyAddress: accessKey.address, chainId: CHAIN_ID, nonce: 4, baseFeePerGas: 600_000_000n, now: EXPIRY - 3_600, feePayer: SPONSOR, feeToken: TOKEN });
+  const ARRIVED = wireShape(PREPARED) as TempoRevokeRequest;
+  /** The decision the server makes before its sponsor signs anything. */
+  const checkRevocation = (serialized: Hex, account: Address) => verifySignedRevocation({ serialized, account, accessKey: accessKey.address, chainId: CHAIN_ID });
+
+  it('signs for a fee payer when one is named, which is exactly what the server’s check accepts', async () => {
+    const root = Account.fromHeadlessWebAuthn(P256.randomPrivateKey(), { rpId: RP_ID, origin: ORIGIN });
+    // What the server prepared is, field for field, what there is to sign with.
+    const serialized = await signTempoRevoke(root, PREPARED);
+    // Not yet a transaction a node takes: the form in which a sender hands one to its fee payer.
+    expect(serialized).toMatch(/^0x78[0-9a-f]+$/);
+    expect(checkRevocation(serialized, root.address)).toMatchObject({ ok: true, revocation: { nonce: 4, maxFeePerGas: 1_200_000_000n, validBefore: PREPARED.validBefore, envelope: { signature: { type: 'webAuthn' } } } });
+
+    const { signature, ...transaction } = Transaction.deserialize(serialized as `0x76${string}`);
+    expect(transaction.calls).toHaveLength(1);
+    expect(transaction.calls[0]).toMatchObject({ to: buildRevoke({ accessKeyAddress: accessKey.address }).to.toLowerCase(), data: buildRevoke({ accessKeyAddress: accessKey.address }).data });
+    // The root signed that a fee payer follows, and for no fee token: that one is the fee payer's to name.
+    expect([transaction.feePayerSignature, transaction.feeToken]).toEqual([null, undefined]);
+    if (signature === undefined) throw new Error('the transaction is not signed');
+    expect(SignatureEnvelope.verify(signature, { address: root.address, payload: revocationSignPayload(PREPARED) })).toBe(true);
+
+    // The same fields without a fee payer give a transaction the account pays for, which the server does not take.
+    const { feePayer: _, ...selfPaid } = PREPARED;
+    const verdict = checkRevocation(await signTempoRevoke(root, selfPaid), root.address);
+    expect(verdict).toEqual({ ok: false, problems: ['the transaction is signed for the account to pay the fee itself, not for the fee sponsor to pay it'] });
+  });
+
+  it('takes the key and the chain from the organisation, and from the server only how the transaction is numbered, priced and dated', () => {
+    const grant = { accessKey: accessKey.address.toLowerCase(), chainId: CHAIN_ID };
+    expect(checkedRevokeFields(ARRIVED, grant)).toEqual({
+      chainId: CHAIN_ID,
+      accessKey: accessKey.address,
+      nonce: 4,
+      nonceKey: 0n,
+      gas: 600_000n,
+      maxFeePerGas: 1_200_000_000n,
+      maxPriorityFeePerGas: 1n,
+      feePayer: SPONSOR,
+      validBefore: PREPARED.validBefore,
+    });
+
+    const refused = (request: unknown, over: Partial<TempoGrant> = {}): string => {
+      try {
+        checkedRevokeFields(request as TempoRevokeRequest, { ...grant, ...over });
+      } catch (error) {
+        if (error instanceof ClientError) return `${error.code}: ${error.message}`;
+        throw error;
+      }
+      return 'taken';
+    };
+    const { feePayer: _, ...unsponsored } = ARRIVED;
+    expect(refused({ ...ARRIVED, accessKey: PAYEES[0] })).toBe('unexpected_request: the revocation the server prepared is not for the access key of this organisation; nothing was signed');
+    expect(refused({ ...ARRIVED, chainId: 4_217 })).toBe(`unexpected_request: the revocation the server prepared is for chain 4217, and the rail of the organisation is on chain ${CHAIN_ID}; nothing was signed`);
+    expect(refused(unsponsored)).toBe('unexpected_request: the revocation the server prepared names nobody but the account itself to pay its fee; nothing was signed');
+    for (const feePayer of [null, true, '', 'the-service', '0x1234']) expect(refused({ ...ARRIVED, feePayer }), String(feePayer)).toMatch(/^unexpected_request: .* names nobody but the account itself to pay its fee/);
+
+    const malformed: Record<string, unknown>[] = [
+      { nonce: -1 },
+      { nonce: '4' },
+      { nonce: 1.5 },
+      { gas: 600_000 },
+      { gas: '-1' },
+      { gas: '0x927c0' },
+      { gas: undefined },
+      { maxFeePerGas: 'a lot' },
+      { maxPriorityFeePerGas: null },
+      { nonceKey: undefined },
+      { validBefore: undefined },
+      { validBefore: 0 },
+      { validBefore: String(PREPARED.validBefore) },
+    ];
+    for (const over of malformed) expect(refused({ ...ARRIVED, ...over }), JSON.stringify(over)).toBe('unexpected_request: the revocation the server prepared is not a transaction that can be signed; nothing was signed');
+    // A nonce on a sequence of its own would never be used up by anything else the account sends.
+    expect(refused({ ...ARRIVED, nonceKey: '7' })).toBe("unexpected_request: the revocation the server prepared is not numbered on the account's own sequence of transactions; nothing was signed");
+    // A rail on no chain in particular, or without a key, has nothing a revocation could be for.
+    expect(refused(ARRIVED, { chainId: 0 })).toMatch(/^invalid_argument: /);
+    expect(refused(ARRIVED, { accessKey: 'the-key' })).toMatch(/^invalid_argument: /);
+  });
+
+  /** The server as the flow meets it: the organisation, its rail, the revocation to sign, and the submission. */
+  function server(root: Address, over: { org?: Record<string, unknown>; rail?: Record<string, unknown>; request?: (honest: TempoRevokeRequest) => unknown; refusal?: { status: number; body: unknown } } = {}) {
+    const seen: { method: string; url: string; body: Record<string, unknown> | undefined }[] = [];
+    const api = createApi({
+      fetch: async (input, init) => {
+        const url = String(input);
+        const body = init?.body === undefined ? undefined : (JSON.parse(String(init.body)) as Record<string, unknown>);
+        seen.push({ method: init?.method ?? 'GET', url, body });
+        if (url === `/api/orgs/${ORG}`) return Response.json({ id: ORG, tempoAccount: root, serviceKeys: [{ kind: 'hl_agent', address: PAYEES[1] }, { kind: 'tempo_access', address: accessKey.address }], ...over.org });
+        if (url.endsWith('/rails/tempo')) return Response.json({ network: 'moderato', chainId: CHAIN_ID, token: { address: TOKEN, symbol: 'AlphaUSD', decimals: 6 }, account: root, accessKey: accessKey.address, key: { status: 'unavailable', source: 'tempo', readAt: 1, reason: 'not asked' }, ...over.rail });
+        if (url.endsWith('/rails/tempo/revoke')) {
+          if (over.refusal !== undefined) return Response.json(over.refusal.body, { status: over.refusal.status });
+          return Response.json(over.request === undefined ? ARRIVED : over.request(ARRIVED));
+        }
+        return Response.json({ tx: `0x${'ef'.repeat(32)}`, txUrl: 'https://explore.testnet.tempo.xyz/tx/0xef' });
+      },
+    });
+    return { api, seen, submitted: () => seen.find((call) => call.url.endsWith('/revoke/submit')) };
+  }
+
+  it('reads the rail, asks the server for the revocation, signs it and hands it back signed', async () => {
+    const root = Account.fromHeadlessWebAuthn(P256.randomPrivateKey(), { rpId: RP_ID, origin: ORIGIN });
+    const { api, seen, submitted } = server(root.address);
+
+    const result = await revokeTempoAccessKey(root, ORG, { api });
+    expect(result).toEqual({ tx: `0x${'ef'.repeat(32)}`, txUrl: 'https://explore.testnet.tempo.xyz/tx/0xef' });
+    expect(seen.map((call) => `${call.method} ${call.url}`).sort()).toEqual(
+      [`GET /api/orgs/${ORG}`, `GET /api/orgs/${ORG}/rails/tempo`, `POST /api/orgs/${ORG}/rails/tempo/revoke`, `POST /api/orgs/${ORG}/rails/tempo/revoke/submit`].sort(),
+    );
+    // The server is told nothing about what to revoke; it is handed one thing, the transaction.
+    expect(seen.find((call) => call.url.endsWith('/rails/tempo/revoke'))?.body).toEqual({});
+    expect(submitted()?.body).toEqual({ signedTransaction: expect.stringMatching(/^0x78[0-9a-f]+$/) });
+    expect(checkRevocation(submitted()?.body?.signedTransaction as Hex, root.address)).toMatchObject({ ok: true });
+    // Within what the endpoint takes for a signed transaction.
+    expect((submitted()?.body?.signedTransaction as Hex).length).toBeLessThan(8_000);
+  });
+
+  it('signs with a stored passkey, once, over the digest of this revocation and of nothing else', async () => {
+    vi.stubGlobal('window', fakeWindow(ORIGIN));
+    try {
+      const authenticator = softwareAuthenticator(ORIGIN);
+      const passkey = await createPasskey({ label: 'Acme Labs payroll', createFn: authenticator.createFn });
+      const root = tempoRoot(passkey, { getFn: authenticator.getFn });
+      const { api, submitted } = server(root.address);
+      await revokeTempoAccessKey(root, ORG, { api });
+
+      expect(authenticator.asserted).toHaveLength(1);
+      expect(authenticator.asserted[0]).toMatchObject({ rpId: RP_ID, credentialId: passkey.credentialId });
+      expect(`0x${Buffer.from(authenticator.asserted[0]?.challenge ?? []).toString('hex')}`).toBe(revocationSignPayload(PREPARED));
+      expect(checkRevocation(submitted()?.body?.signedTransaction as Hex, root.address)).toMatchObject({ ok: true });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('signs for no key or chain but the organisation’s own, and for no fee of the account’s, whatever the server prepares', async () => {
+    const root = Account.fromHeadlessWebAuthn(P256.randomPrivateKey(), { rpId: RP_ID, origin: ORIGIN });
+    const signTransaction = vi.fn(root.signTransaction);
+    const signer = { address: root.address, signTransaction } as Parameters<typeof revokeTempoAccessKey>[0];
+    const attacker = generateAccessKey().address;
+
+    const dishonest: [string, Parameters<typeof server>[1]][] = [
+      ['the revocation of another key', { request: (honest) => ({ ...honest, accessKey: attacker }) }],
+      ['a revocation on another chain', { request: (honest) => ({ ...honest, chainId: 4_217 }) }],
+      ['a revocation the account pays for', { request: ({ feePayer: _, ...honest }) => honest }],
+      ['a revocation with no deadline', { request: ({ validBefore: _, ...honest }) => honest }],
+      ['a revocation with gas that is no number', { request: (honest) => ({ ...honest, gas: 'as much as it takes' }) }],
+      ['something that is no revocation at all', { request: () => ({ transaction: '0x76abcd' }) }],
+      // A rail that names a key which is not the organisation's own, consistent with the revocation it prepares.
+      ['a rail of another key', { rail: { accessKey: attacker }, request: (honest) => ({ ...honest, accessKey: attacker }) }],
+    ];
+    for (const [what, over] of dishonest) {
+      const lying = server(root.address, over);
+      expect((await failure(revokeTempoAccessKey(signer, ORG, { api: lying.api }))).code, what).toBe('unexpected_request');
+      expect(lying.submitted(), what).toBeUndefined();
+    }
+
+    // An organisation whose Tempo account is another, or that has none, or no access key.
+    expect((await failure(revokeTempoAccessKey(signer, ORG, { api: server(root.address, { org: { tempoAccount: PAYEES[0] } }).api }))).code).toBe('wrong_account');
+    expect((await failure(revokeTempoAccessKey(signer, ORG, { api: server(root.address, { org: { tempoAccount: null }, rail: { account: null } }).api }))).code).toBe('wrong_account');
+    expect((await failure(revokeTempoAccessKey(signer, ORG, { api: server(root.address, { org: { serviceKeys: [] }, rail: { accessKey: null } }).api }))).code).toBe('nothing_to_sign');
+    expect(signTransaction).not.toHaveBeenCalled();
+  });
+
+  it('passes on the server’s refusal and the treasurer’s, and hands nothing back then', async () => {
+    const root = Account.fromHeadlessWebAuthn(P256.randomPrivateKey(), { rpId: RP_ID, origin: ORIGIN });
+    const signTransaction = vi.fn(root.signTransaction);
+    const nothing = server(root.address, { refusal: { status: 409, body: { error: 'refused', message: `access key ${accessKey.address} is already revoked on this account; there is nothing to revoke` } } });
+    const refused = await failure(revokeTempoAccessKey({ address: root.address, signTransaction } as Parameters<typeof revokeTempoAccessKey>[0], ORG, { api: nothing.api }));
+    expect({ status: refused.status, code: refused.code, message: refused.message }).toEqual({ status: 409, code: 'refused', message: `access key ${accessKey.address} is already revoked on this account; there is nothing to revoke` });
+    expect(signTransaction).not.toHaveBeenCalled();
+
+    const willing = server(root.address);
+    const declining = {
+      address: root.address,
+      signTransaction: async () => {
+        throw new DOMException('The operation either timed out or was not allowed.', 'NotAllowedError');
+      },
+    };
+    expect((await failure(revokeTempoAccessKey(declining as never, ORG, { api: willing.api }))).code).toBe('wallet_rejected');
+    expect([nothing.submitted(), willing.submitted()]).toEqual([undefined, undefined]);
   });
 });
