@@ -48,7 +48,7 @@ It can call `transferWithMemo` on the one stablecoin, up to what is left of the 
 - The limit is per fixed window. The windows sit on a grid that starts when the key is provisioned, so a thief who acts at the end of one window and the start of the next can spend the limit twice within a short time.
 - It cannot call anything else, and it cannot exceed the limit: both attempts are reverted transactions in [PROOF 4](PROOF.md#4-tempo-payroll-through-a-key-with-a-limit).
 
-Remedy: the root of the account revokes the key. A revoked key cannot be authorized again.
+Remedy: the root of the account revokes the key, from the application with one passkey signature; the service's sponsor pays the fee. A revoked key cannot be authorized again, so the service then makes a new one, which can do nothing until the root authorizes it.
 
 ### The Tempo fee sponsor key
 

@@ -12,7 +12,7 @@ Every claim the README and the landing page make, one row each, with the stronge
 
 A claim with a lower tier is not weaker in what it says; it is weaker in how it was checked. Where a claim has only "Statement", that is written out.
 
-The devnet and Moderato transactions below come from the proof scripts in `packages/solana/scripts` and `packages/tempo/scripts`; what each run printed is kept in [PROOF-solana-devnet.md](PROOF-solana-devnet.md) and [PROOF-tempo-moderato.md](PROOF-tempo-moderato.md). Test networks do not keep history for ever.
+The devnet and Moderato transactions below come from the proof scripts in `packages/solana/scripts` and `packages/tempo/scripts`; what each run printed is kept in [PROOF-solana-devnet.md](PROOF-solana-devnet.md), [PROOF-tempo-moderato.md](PROOF-tempo-moderato.md) and [PROOF-tempo-revocation-moderato.md](PROOF-tempo-revocation-moderato.md). Test networks do not keep history for ever.
 
 ## The keys
 
@@ -30,6 +30,7 @@ The devnet and Moderato transactions below come from the proof scripts in `packa
 | A call outside the key's scope is refused by the chain | Mainnet | `CallNotAllowed`: [`0x80b065d2…7d587d11`](https://explore.tempo.xyz/tx/0x80b065d23f17bc54495e2d92eb9e15980f68d50e39f6e83ae142f2ed7d587d11) |
 | A payment to an address outside the key's list of recipients is refused by the chain | Test | The key on mainnet lists two recipients, but no payment to a third was attempted there. The rail's own check before sending is in `packages/tempo/test/preflight.test.ts` |
 | The account's root can revoke the key, and a revoked key pays nothing | Mainnet for the revocation, Test for the refusal | [`0x32e9a47b…6ebe353c`](https://explore.tempo.xyz/tx/0x32e9a47b2b1997cc21aac5a842d4ba92c2636623d3730dae9b0cd9bb6ebe353c). The payout after it was refused by the rail before sending, so there is no transaction; `packages/tempo/test/rail.test.ts` |
+| The owner revokes the key from the application with one passkey signature, the service's sponsor pays the fee, and the account needs to hold nothing | Testnet | Moderato: the root held 0 throughout and the receipt names the sponsor as fee payer, [`0x77bfd36b…7f082737`](https://explore.testnet.tempo.xyz/tx/0x77bfd36b990af6cb8f9f6c3ba2c39fd4b290e5611950fbe6ba4cec317f082737); a revocation signed for the account to pay is refused and never relayed. [PROOF-tempo-revocation-moderato.md](PROOF-tempo-revocation-moderato.md); `packages/tempo/test/revocation.test.ts`, `apps/web/test/payouts.test.ts` |
 | Fees on Tempo are paid by a separate sponsor and do not count against the limit | Mainnet | [PROOF 4](PROOF.md#4-tempo-payroll-through-a-key-with-a-limit): 0.75 paid, the limit fell by 0.75 |
 | Paying the same Tempo run again sends nothing | Mainnet | [PROOF 4](PROOF.md#4-tempo-payroll-through-a-key-with-a-limit). The evidence is that no second transaction exists; `packages/tempo/test/rail.test.ts` |
 | One Tempo transaction carries up to 32 payout lines | Testnet | Moderato, 32 lines: [`0xc52adf6a…dc0de7f9`](https://explore.testnet.tempo.xyz/tx/0xc52adf6a98ad7d8fe339fdcac0b05b268bca854fb21a55c219d9ccbedc0de7f9) |
