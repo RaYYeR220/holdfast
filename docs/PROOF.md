@@ -2,7 +2,7 @@
 
 Everything below happened on mainnet with a small real treasury, and every line can be checked without trusting this repository. Amounts are tiny on purpose; the mechanisms are the ones a team would use.
 
-Recorded on 10 and 11 October 2026.
+Sections 1 to 6 were recorded on 10 and 11 October 2026, section 7 on 12 October 2026.
 
 ## The demo organisation
 
@@ -17,6 +17,8 @@ Recorded on 10 and 11 October 2026.
 | Tempo fee sponsor (the service's) | `0x2b673538B5214D06d8E56A59eFFC67853453d4e3` |
 | Solana wallet (the team's) | [`B1zTmCPofZo7TZET5k7jL43FzVG5TFcbQPijYi7mFV97`](https://solscan.io/account/B1zTmCPofZo7TZET5k7jL43FzVG5TFcbQPijYi7mFV97), USDC account `A8VB3LCer26TftTWTnjqgnzrHYFGk72tHvN78yCNfgEw` |
 | Solana delegate (the service's) | `HBy3fT36LiCgfBuf1mymsxRwv2DDKQd5MB8z8DJghnu3` |
+| HedgeAttestor contract (HyperEVM, chain 999) | [`0xa6aFA5c68146BbD4C49510987847C7C38837824E`](https://hyperevmscan.io/address/0xa6afa5c68146bbd4c49510987847c7c38837824e) |
+| Attester (named by the team's account) | `0xaB529b0Da6e787Ff23092D00e98db6C1160b33A5` |
 
 The payees in the payout runs are addresses of our own, standing in for contractors.
 
@@ -58,7 +60,7 @@ The refusal. The agent key signed a withdrawal of 5 USDC and a transfer of 5 USD
 Must deposit before performing actions. User: 0x677811d01c4250c2e3677a85b430a82f078c5928
 ```
 
-The address in the answer is the agent's, not the team's. A withdrawal or transfer acts on the account of whoever signed it; signed by the agent it reaches for the agent's own account, which is empty, and never for the team's. The agent key can place and cancel orders on the team's account and nothing else. `probeWithdrawRefusal` in `packages/hyperliquid` repeats the attempt.
+The address in the answer is the agent's, not the team's. A withdrawal or transfer acts on the account of whoever signed it; signed by the agent it reaches for the agent's own account, which is empty, and never for the team's. The agent key can place and cancel orders on the team's account and switch its account mode; it cannot take funds out of it. `probeWithdrawRefusal` in `packages/hyperliquid` repeats the attempt.
 
 ## 4. Tempo: payroll through a key with a limit
 
@@ -89,7 +91,7 @@ The team's wallet approved the service key as delegate for 1.50 USDC on its toke
 | The wallet revokes the delegate | allowance 0 | [`2naSHkBj…aMtkW5Su`](https://solscan.io/tx/2naSHkBjJeyd8bxKqFMoHEQBQMYwyk2rc37uRiwWRjPK8eV86X2t4LLworyKrMNgtEekU5sjr3PaqWZhaMtkW5Su) |
 | The former delegate tries to move one base unit | failed on chain: Token program error `0x4` | [`FjduxHjy…xrsrYVg`](https://solscan.io/tx/FjduxHjy1bqB1Nc4i6QbKkyUgEwEXMVsVmM4z3CFpYiJFfY8gsSaQ3t5azzDrB8czwHamboSwirDqN37xrsrYVg) |
 
-This run was paid before payout runs carried a marker. The marker, a System account that makes the chain itself refuse a second payment of the same run, is shown on devnet in [`packages/solana`](../packages/solana) with a transaction for each property, including two payments of one run racing in the same slot.
+This run was paid before payout runs carried a marker. The marker, a System account that makes the chain itself refuse a second payment of the same run, is shown on devnet in [PROOF-solana-devnet.md](PROOF-solana-devnet.md) with a transaction for each property, including two payments of one run sent at the same moment.
 
 ## 6. The controller's journal
 
@@ -104,9 +106,49 @@ Each decision is an entry whose digest covers its inputs, the decision and the e
 
 `holdfast verify` checks the chain of digests, scans Zcash with the viewing key, reads the Hyperliquid history and derives the statement again. It says beside each step what that step still rests on.
 
+## 7. Hyperliquid, HyperEVM: the hedge attested on chain
+
+`HedgeAttestor` is one contract on HyperEVM. The team's account deployed it and named an attester. For each attestation the contract reads the team's position and the prices from HyperCore through the read precompiles, in the same transaction, and stores them beside the Merkle root of the controller's journal.
+
+| Step | Result | Transaction |
+|---|---|---|
+| The team's account deploys the contract | at [`0xa6aFA5c6…37824E`](https://hyperevmscan.io/address/0xa6afa5c68146bbd4c49510987847c7c38837824e), the address a contract created by that account's first HyperEVM transaction gets; the source is on [Sourcify](https://sourcify.dev/server/v2/contract/999/0xa6aFA5c68146BbD4C49510987847C7C38837824E) as an exact match | |
+| The team's account names the attester | `attesterOf` answers `0xaB529b0D…160b33A5` | [`0x95820bd3…cf3f684e`](https://hyperevmscan.io/tx/0x95820bd326fcda3c4161dca33de852a29241cca640376b1b2ff6e817cf3f684e) |
+| The attester records the first snapshot | series 0, snapshot 0 | [`0xfeaf1ab2…8a47a5e7`](https://hyperevmscan.io/tx/0xfeaf1ab22f67efe059397765f55afaa109c04e35368d323903411a768a47a5e7) |
+
+What the snapshot holds, read back with `snapshot(team, 0, 0)`:
+
+| Field | Value |
+|---|---|
+| Perpetual | index 214, ZEC |
+| Position (`szi`) | -1: a short of 0.01 ZEC |
+| Oracle price | 12724000, which is 1,272.40 |
+| Mark price | 12720000, which is 1,272.00 |
+| HyperCore block | 1,181,263,717 |
+| Time of the HyperEVM block | 12 October 2026, 16:06:54 UTC |
+| Journal entries under the root | 10 |
+| Journal root | `0xe0d1ea42d2011100ee8f893c050ab609393467382eafd5042e00d9ff7a8ad844` |
+| Treasury commitment | `0x0f911df42c9fe0a00ea0a9bf2d4c6201dfd3b6d01bfa1271540c659f053f26cc`, a salted hash of the balance; the balance itself is not on chain |
+
+The position, the prices and the HyperCore block are what the precompiles reported for the account and the perpetual named in the call; the attester cannot supply them. The root, the count and the commitment are the attester's statements, and the contract cannot check them.
+
+The journal can be held against the root. The first ten entries of the public journal (`/api/demo/demo/journal?limit=10&beforeSeq=11`) give this root through `attestationFor` in `packages/attest`. Entry 2, the one that sold the first lot in section 3, has the leaf `0x1071afec…9c564c62`, which is its digest, and the contract confirms it is under the root. This call answers `true`:
+
+```
+cast call 0xa6aFA5c68146BbD4C49510987847C7C38837824E \
+  "verifyEntry(address,uint256,uint256,bytes32,bytes32[])(bool)" \
+  0xC7e7BAAFb0C822d0A934BbB2268F15A7eD8485bc 0 0 \
+  0x1071afec6513bb629db9e62c7731e26ed6c534d2eb61d911a9dcf2499c564c62 \
+  "[0x487c9a6e27ed7bc508e85b4b63e59c5574ee23f96401733b01c4983c1ffcca3a,0x4b18004aa3960ac22e1b163b59fa457e86836d01a7bb0911e9b9014afad31b11,0x73cc647ee81617b12b7b054c5223304e7cfc40448d4c8b70fbc18ef7cd6fbabf,0x996a98ed4c015fc25cd1738d8dfa8ee56157ad493e752fad1bdd39acc35b3be9]" \
+  --rpc-url https://rpc.hyperliquid.xyz/evm
+```
+
+Two limits. A snapshot is one moment, and the attester chose it. `verifyEntry` accepts any node of the journal tree, inner nodes as well as leaves, so a `true` is about an entry only when the leaf was computed from that entry by whoever is checking; `journalLeaf` in `packages/attest` does that.
+
 ## What this does not show
 
 - No users other than us, no revenue, no audit, no token.
 - The amounts are a few dollars. Nothing here says how the system behaves with size; the backtest in the README covers price paths, not liquidity.
 - The hedge on Hyperliquid and the payouts on Tempo and Solana are public. Privacy covers what arrives in the treasury, its memos and its balance, and ends where money leaves the shielded pool.
 - A lock needs margin top-ups in a strong rally. The graded scenario in which every top-up is ignored while ZEC doubles ends worse than doing nothing; it is in the scorecard.
+- The attestation in section 7 is a single snapshot. Nothing on chain says what the hedge was before it or between snapshots.

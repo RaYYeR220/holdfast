@@ -1,0 +1,107 @@
+# Holdfast on one machine: Postgres, a migration step that runs once, the web
+# application, and a scheduler that calls the tick endpoint.
+#
+#   cp .env.compose.example .env      # then fill it in
+#   docker compose up --build -d
+#
+# See docs/SELF-HOSTING.md.
+
+name: holdfast
+
+x-app: &app
+  image: holdfast-web:local
+  build:
+    context: .
+
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: holdfast
+      POSTGRES_DB: holdfast
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U holdfast -d holdfast"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
+  # Applies the migrations that are not applied yet and exits. The web
+  # application starts only after this has exited with success.
+  migrate:
+    <<: *app
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    working_dir: /repo
+    command: ["node_modules/.bin/tsx", "packages/db/scripts/migrate.ts"]
+    environment:
+      DATABASE_URL: postgres://holdfast:${POSTGRES_PASSWORD}@db:5432/holdfast
+
+  web:
+    <<: *app
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "${HOLDFAST_BIND:-127.0.0.1}:${HOLDFAST_PORT:-3000}:3000"
+    environment:
+      DATABASE_URL: postgres://holdfast:${POSTGRES_PASSWORD}@db:5432/holdfast
+      HOLDFAST_MASTER_KEY: ${HOLDFAST_MASTER_KEY:?set HOLDFAST_MASTER_KEY in .env}
+      TICK_SECRET: ${TICK_SECRET:?set TICK_SECRET in .env}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+      HOLDFAST_PUBLIC_HOST: ${HOLDFAST_PUBLIC_HOST:?set HOLDFAST_PUBLIC_HOST in .env}
+      HOLDFAST_NETWORK: ${HOLDFAST_NETWORK:?set HOLDFAST_NETWORK in .env}
+      TEMPO_SPONSOR_PRIVATE_KEY: ${TEMPO_SPONSOR_PRIVATE_KEY:?set TEMPO_SPONSOR_PRIVATE_KEY in .env}
+      # Optional. An empty value is the same as leaving the variable out.
+      ZCASH_ENDPOINTS: ${ZCASH_ENDPOINTS:-}
+      TEMPO_NETWORK: ${TEMPO_NETWORK:-}
+      TEMPO_RPC_URL: ${TEMPO_RPC_URL:-}
+      TEMPO_TOKEN: ${TEMPO_TOKEN:-}
+      SOLANA_CLUSTER: ${SOLANA_CLUSTER:-}
+      SOLANA_RPC_URL: ${SOLANA_RPC_URL:-}
+      SOLANA_MINT: ${SOLANA_MINT:-}
+      SOLANA_MINT_DECIMALS: ${SOLANA_MINT_DECIMALS:-}
+      SOLANA_MARKERS_FROM: ${SOLANA_MARKERS_FROM:-}
+      ONECLICK_API_KEY: ${ONECLICK_API_KEY:-}
+      HEDGE_ATTESTOR_ADDRESS: ${HEDGE_ATTESTOR_ADDRESS:-}
+      HYPEREVM_RPC_URL: ${HYPEREVM_RPC_URL:-}
+      ATTEST_EVERY_MINUTES: ${ATTEST_EVERY_MINUTES:-}
+    healthcheck:
+      # Answers 200 only when the application is up and can read the database.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/demo').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+
+  # Calls POST /api/tick with the bearer secret, waits for the answer, sleeps
+  # a minute and starts again. One line is logged per call.
+  scheduler:
+    image: busybox:1.36
+    restart: unless-stopped
+    depends_on:
+      web:
+        condition: service_healthy
+    environment:
+      TICK_SECRET: ${TICK_SECRET}
+    command:
+      - sh
+      - -c
+      - |
+        while true; do
+          if wget -q -O /dev/null --header "Authorization: Bearer $$TICK_SECRET" --post-data '' http://web:3000/api/tick; then
+            echo "$$(date -u +%Y-%m-%dT%H:%M:%SZ) tick answered"
+          else
+            echo "$$(date -u +%Y-%m-%dT%H:%M:%SZ) tick failed"
+          fi
+          sleep 60
+        done
+
+volumes:
+  db-data:

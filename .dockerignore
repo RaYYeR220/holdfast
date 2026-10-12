@@ -1,0 +1,22 @@
+# Nothing enters the build context unless it is named here.
+*
+
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+!tsconfig.base.json
+!apps
+!packages
+
+# Inside what is let in: nothing installed, built, generated or secret.
+**/node_modules
+**/.next
+**/out
+**/dist
+**/coverage
+**/.vercel
+**/.turbo
+**/.env
+**/.env.*
+**/*.tsbuildinfo
+**/*.log
