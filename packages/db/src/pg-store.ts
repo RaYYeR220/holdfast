@@ -1,15 +1,18 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomBytes, randomUUID } from 'node:crypto';
-import type { OutgoingPayment, OwnedNote, Policy, Zat } from '@holdfast/core';
+import type { Hex, OutgoingPayment, OwnedNote, Policy, Zat } from '@holdfast/core';
 import type { JournalEntry, OrderRecord, OrgState, ScanCommit, Store } from '@holdfast/engine';
 import { type SQL, and, asc, between, desc, eq, getTableColumns, gt, inArray, isNotNull, isNull, like, lt, lte, ne, not, notInArray, or, sql } from 'drizzle-orm';
 import type { PgColumn, PgTable } from 'drizzle-orm/pg-core';
 import type { Database } from './client';
 import { decryptSecret, encryptSecret } from './crypto';
 import {
+  type AttestationOutcome,
+  type AttestationRow,
   type AuditLinkRow,
   type KeyKind,
   MAX_RUNS_PER_MONTH,
+  type NewAttestation,
   type NewAuditLink,
   type NewPayoutLine,
   type NewPayoutRun,
@@ -26,11 +29,12 @@ import {
   type ServiceKey,
   type SwapRow,
   type SwapSighting,
+  type TreasuryOpening,
   runIdOf,
   runIdPrefix,
   runNumberOf,
 } from './records';
-import { auditLinks, authNonces, journal, keys, orders, orgs, payoutLines, payoutRuns, refusals, swaps, zcashFees, zcashNotes, zcashOutgoing } from './schema';
+import { attestations, auditLinks, authNonces, journal, keys, orders, orgs, payoutLines, payoutRuns, refusals, swaps, zcashFees, zcashNotes, zcashOutgoing } from './schema';
 
 export const DEFAULT_LEASE_MS = 120_000;
 const DEFAULT_PAGE = 50;
@@ -103,6 +107,8 @@ export interface FeeRecord {
 const unknownOrg = (orgId: string) => new Error(`unknown organisation ${orgId}`);
 const ufvkContext = (orgId: string) => `ufvk:${orgId}`;
 const keyContext = (orgId: string, kind: KeyKind, address: string) => `key:${orgId}:${kind}:${address}`;
+// A salt opens one commitment, so the commitment is where it lives.
+const saltContext = (orgId: string, commitment: Hex) => `salt:${orgId}:${commitment}`;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** The states in which the swap service is done with a swap. */
@@ -238,6 +244,21 @@ const AUDIT_LINK = {
   expiresAt: auditLinks.expiresAt,
   revokedAt: auditLinks.revokedAt,
   createdAt: auditLinks.createdAt,
+};
+
+// Without the balance and the salt: they are what the commitment hides, and are read only to open it.
+const ATTESTATION = {
+  id: attestations.id,
+  orgId: attestations.orgId,
+  series: attestations.series,
+  number: attestations.number,
+  tx: attestations.tx,
+  journalCount: attestations.journalCount,
+  journalRoot: attestations.journalRoot,
+  commitment: attestations.commitment,
+  sentAt: attestations.sentAt,
+  status: attestations.status,
+  detail: attestations.detail,
 };
 
 /**
@@ -788,6 +809,114 @@ export class PgStore implements Store {
       .from(auditLinks)
       .where(and(eq(auditLinks.tokenHash, tokenHash), isNull(auditLinks.revokedAt), or(isNull(auditLinks.expiresAt), gt(auditLinks.expiresAt, this.clock()))));
     return row ?? null;
+  }
+
+  /**
+   * Keep an attempt to record a snapshot. The salt of its commitment is
+   * encrypted like every other secret. One transaction is one attestation,
+   * and so is one snapshot: recording either a second time writes nothing and
+   * returns null. So does recording a pending attestation while another of
+   * the organisation is pending: there is one at a time.
+   */
+  async recordAttestation(orgId: string, attestation: NewAttestation): Promise<AttestationRow | null> {
+    const { treasury } = attestation;
+    if ((attestation.number !== null) !== (attestation.status === 'confirmed')) {
+      throw new RangeError('a snapshot has a number once the chain holds it, and not before');
+    }
+    if (attestation.tx !== null && treasury === null) throw new RangeError('an attestation that was sent carries a treasury commitment');
+    const [row] = await this.db
+      .insert(attestations)
+      .values({
+        orgId,
+        series: attestation.series,
+        number: attestation.number,
+        tx: attestation.tx,
+        journalCount: attestation.journalCount,
+        journalRoot: attestation.journalRoot,
+        treasuryZat: treasury?.zat ?? null,
+        saltEnc: treasury === null ? null : encryptSecret(treasury.salt, this.masterKey, saltContext(orgId, treasury.commitment)),
+        commitment: treasury?.commitment ?? null,
+        sentAt: attestation.sentAt,
+        status: attestation.status,
+        detail: attestation.detail,
+      })
+      .onConflictDoNothing()
+      .returning(ATTESTATION);
+    return row ?? null;
+  }
+
+  /**
+   * Write down how a pending attestation ended. One that already ended is
+   * left as it is. Returns the row as it now stands, or null when the
+   * organisation has no such attestation.
+   */
+  async settleAttestation(orgId: string, attestationId: string, outcome: AttestationOutcome): Promise<AttestationRow | null> {
+    if (!UUID.test(attestationId)) return null;
+    const which = and(eq(attestations.orgId, orgId), eq(attestations.id, attestationId));
+    const changes =
+      outcome.status === 'confirmed'
+        ? { status: outcome.status, series: outcome.series, number: outcome.number, detail: null }
+        : { status: outcome.status, detail: outcome.detail };
+    const [settled] = await this.db
+      .update(attestations)
+      .set(changes)
+      .where(and(which, eq(attestations.status, 'pending')))
+      .returning(ATTESTATION);
+    if (settled !== undefined) return settled;
+    const [existing] = await this.db.select(ATTESTATION).from(attestations).where(which);
+    return existing ?? null;
+  }
+
+  /** Newest first. */
+  async listAttestations(orgId: string, limit = DEFAULT_PAGE): Promise<AttestationRow[]> {
+    return this.db.select(ATTESTATION).from(attestations).where(eq(attestations.orgId, orgId)).orderBy(desc(attestations.sentAt), asc(attestations.id)).limit(limit);
+  }
+
+  /** The attestation of an organisation whose end is not known yet, or null when it has none. There is never more than one. */
+  async pendingAttestation(orgId: string): Promise<AttestationRow | null> {
+    const [row] = await this.db
+      .select(ATTESTATION)
+      .from(attestations)
+      .where(and(eq(attestations.orgId, orgId), eq(attestations.status, 'pending')));
+    return row ?? null;
+  }
+
+  /** The latest attempt the contract refused in one series, or null when it refused none there. */
+  async refusedAttestation(orgId: string, series: bigint): Promise<AttestationRow | null> {
+    const [row] = await this.db
+      .select(ATTESTATION)
+      .from(attestations)
+      .where(and(eq(attestations.orgId, orgId), eq(attestations.series, series), eq(attestations.status, 'refused')))
+      .orderBy(desc(attestations.sentAt), asc(attestations.id))
+      .limit(1);
+    return row ?? null;
+  }
+
+  /**
+   * The attestations behind the snapshots of one series with these numbers,
+   * highest number first. A snapshot the service did not record is simply not
+   * among them.
+   */
+  async snapshotAttestations(orgId: string, series: bigint, numbers: readonly bigint[]): Promise<AttestationRow[]> {
+    if (numbers.length === 0) return [];
+    return this.db
+      .select(ATTESTATION)
+      .from(attestations)
+      .where(and(eq(attestations.orgId, orgId), eq(attestations.series, series), inArray(attestations.number, [...numbers])))
+      .orderBy(desc(attestations.number));
+  }
+
+  /**
+   * What the treasury commitment of a snapshot was made from: the balance and
+   * the salt, decrypted. Null for a snapshot the service did not record.
+   */
+  async openAttestation(orgId: string, series: bigint, number: bigint): Promise<TreasuryOpening | null> {
+    const [row] = await this.db
+      .select({ zat: attestations.treasuryZat, saltEnc: attestations.saltEnc, commitment: attestations.commitment })
+      .from(attestations)
+      .where(and(eq(attestations.orgId, orgId), eq(attestations.series, series), eq(attestations.number, number)));
+    if (row === undefined || row.zat === null || row.saltEnc === null || row.commitment === null) return null;
+    return { zat: row.zat, salt: decryptSecret(row.saltEnc, this.masterKey, saltContext(orgId, row.commitment)) as Hex, commitment: row.commitment };
   }
 
   /**

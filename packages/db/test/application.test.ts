@@ -1,5 +1,6 @@
+import type { Hex } from '@holdfast/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { type NewPayoutLine, type NewSwap, type PgliteConnection, runIdOf, runIdPrefix, runNumberOf } from '../src';
+import { type NewAttestation, type NewPayoutLine, type NewSwap, type PgliteConnection, type TreasuryOpening, runIdOf, runIdPrefix, runNumberOf } from '../src';
 import { Clock } from './support/fakes';
 import { ORG, STARTUP_TIMEOUT_MS, migratedPglite, pgStore, pgUnderTest } from './support/stores';
 
@@ -575,5 +576,182 @@ describe('auditor links', () => {
     const revokedAt = clock.ms;
     clock.advance(5_000);
     expect(await store.revokeAuditLink(org, 'hash-revoked')).toMatchObject({ revokedAt });
+  });
+});
+
+describe('attestations', () => {
+  const root = (byte: string): Hex => `0x${byte.repeat(32)}`;
+  const opening = (n: number): TreasuryOpening => ({ zat: 5_000_000n + BigInt(n), salt: root(`5${n}`), commitment: root(`c${n}`) });
+
+  let txs = 0;
+  const sent = (over: Partial<NewAttestation> = {}): NewAttestation => ({
+    series: 0n,
+    number: null,
+    tx: `0xattest${++txs}`,
+    journalCount: 12n,
+    journalRoot: root('a1'),
+    treasury: opening(1),
+    sentAt: OCTOBER,
+    status: 'pending',
+    detail: null,
+    ...over,
+  });
+  const confirmed = (number: bigint, over: Partial<NewAttestation> = {}) => sent({ number, status: 'confirmed', ...over });
+  const refusedBeforeSending = (over: Partial<NewAttestation> = {}) => sent({ tx: null, treasury: null, status: 'refused', detail: 'JournalShrank(40, 12)', ...over });
+
+  it('are kept as they were sent, and listed without the balance and the salt their commitment hides', async () => {
+    const { store, org } = await setup();
+    const attempt = sent();
+    const row = await store.recordAttestation(org, attempt);
+    expect(row).toEqual({
+      id: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      orgId: org,
+      series: 0n,
+      number: null,
+      tx: attempt.tx,
+      journalCount: 12n,
+      journalRoot: root('a1'),
+      commitment: root('c1'),
+      sentAt: OCTOBER,
+      status: 'pending',
+      detail: null,
+    });
+    expect(await store.listAttestations(org)).toEqual([row]);
+
+    const [kept] = await rowsOf<{ salt_enc: string; treasury_zat: string | number | bigint }>('select salt_enc, treasury_zat from holdfast.attestations where org_id = $1', [org]);
+    expect(kept?.salt_enc).toMatch(/^v1\./);
+    expect(kept?.salt_enc).not.toContain(opening(1).salt.slice(2));
+    expect(BigInt(kept?.treasury_zat ?? 0)).toBe(5_000_001n);
+    const listed = JSON.stringify(await store.listAttestations(org), (_key, value: unknown) => (typeof value === 'bigint' ? value.toString() : value));
+    expect(listed).not.toContain(opening(1).salt);
+    expect(listed).not.toContain('5000001');
+  });
+
+  it('are one per transaction, and one per snapshot', async () => {
+    const { store, org, addOrg } = await setup();
+    const first = confirmed(0n);
+    expect(await store.recordAttestation(org, first)).not.toBeNull();
+    expect(await store.recordAttestation(org, { ...first, number: 1n })).toBeNull();
+    expect(await store.recordAttestation(org, confirmed(0n))).toBeNull();
+    expect(await store.recordAttestation(org, confirmed(0n, { series: 1n }))).not.toBeNull();
+    expect(await store.listAttestations(org)).toHaveLength(2);
+
+    // Refusals that sent nothing have no transaction to be told apart by.
+    expect(await store.recordAttestation(org, refusedBeforeSending())).not.toBeNull();
+    expect(await store.recordAttestation(org, refusedBeforeSending())).not.toBeNull();
+
+    const other = await addOrg();
+    expect(await store.recordAttestation(other, first)).not.toBeNull();
+  });
+
+  it('go from pending to how they ended, and then stay there', async () => {
+    const { store, org, addOrg } = await setup();
+    const pending = await store.recordAttestation(org, sent());
+    if (pending === null) throw new Error('the attestation was not stored');
+    const other = await addOrg();
+
+    expect(await store.settleAttestation(other, pending.id, { status: 'lost', detail: 'never seen' })).toBeNull();
+    expect(await store.settleAttestation(org, 'not-a-uuid', { status: 'lost', detail: 'never seen' })).toBeNull();
+    expect(await store.pendingAttestation(org)).toEqual(pending);
+
+    // The chain says where the snapshot went: the series may have moved on since it was sent.
+    const landed = await store.settleAttestation(org, pending.id, { status: 'confirmed', series: 1n, number: 4n });
+    expect(landed).toEqual({ ...pending, status: 'confirmed', series: 1n, number: 4n });
+    expect(await store.settleAttestation(org, pending.id, { status: 'lost', detail: 'never seen' })).toEqual(landed);
+    expect(await store.pendingAttestation(org)).toBeNull();
+
+    const dropped = await store.recordAttestation(org, sent());
+    if (dropped === null) throw new Error('the attestation was not stored');
+    const gone = await store.settleAttestation(org, dropped.id, { status: 'lost', detail: 'no receipt after 30 minutes' });
+    expect(gone).toEqual({ ...dropped, status: 'lost', detail: 'no receipt after 30 minutes' });
+    expect(await store.settleAttestation(org, dropped.id, { status: 'confirmed', series: 0n, number: 9n })).toEqual(gone);
+  });
+
+  it('are pending one at a time for an organisation: a second cannot be written down until the first has ended', async () => {
+    const { store, org, addOrg } = await setup();
+    const first = await store.recordAttestation(org, sent());
+    if (first === null) throw new Error('the attestation was not stored');
+    expect(await store.recordAttestation(org, sent())).toBeNull();
+    expect(await store.listAttestations(org)).toEqual([first]);
+
+    // What has ended is no bar, nor is what another organisation has pending.
+    expect(await store.recordAttestation(org, refusedBeforeSending())).not.toBeNull();
+    expect(await store.recordAttestation(await addOrg(), sent())).not.toBeNull();
+    await store.settleAttestation(org, first.id, { status: 'reverted', detail: 'reverted' });
+    const second = await store.recordAttestation(org, sent());
+    expect(await store.pendingAttestation(org)).toEqual(second);
+
+    // Not even two at the same moment: the database itself lets one through.
+    await store.settleAttestation(org, second?.id ?? '', { status: 'lost', detail: 'never seen' });
+    const raced = await Promise.all([store.recordAttestation(org, sent()), store.recordAttestation(org, sent()), store.recordAttestation(org, sent())]);
+    expect(raced.filter((row) => row !== null)).toHaveLength(1);
+  });
+
+  it('are listed newest first', async () => {
+    const { store, org } = await setup();
+    const first = await store.recordAttestation(org, confirmed(0n, { sentAt: OCTOBER }));
+    const second = await store.recordAttestation(org, confirmed(1n, { sentAt: OCTOBER + 60_000 }));
+    const third = await store.recordAttestation(org, sent({ sentAt: OCTOBER + 120_000 }));
+    expect(await store.listAttestations(org)).toEqual([third, second, first]);
+    expect(await store.listAttestations(org, 2)).toEqual([third, second]);
+    expect(await store.pendingAttestation(org)).toEqual(third);
+  });
+
+  it('remember the refusal that stopped a series, for that series and no other', async () => {
+    const { store, org, addOrg } = await setup();
+    expect(await store.refusedAttestation(org, 0n)).toBeNull();
+    await store.recordAttestation(org, confirmed(0n));
+    const refusal = await store.recordAttestation(org, refusedBeforeSending({ sentAt: OCTOBER + 60_000 }));
+    expect(refusal).toMatchObject({ status: 'refused', tx: null, commitment: null, number: null, detail: 'JournalShrank(40, 12)' });
+    const later = await store.recordAttestation(org, refusedBeforeSending({ sentAt: OCTOBER + 120_000, detail: 'JournalRewritten' }));
+
+    expect(await store.refusedAttestation(org, 0n)).toEqual(later);
+    expect(await store.refusedAttestation(org, 1n)).toBeNull();
+    expect(await store.refusedAttestation(await addOrg(), 0n)).toBeNull();
+  });
+
+  it('are found by the snapshots they are behind', async () => {
+    const { store, org } = await setup();
+    const zero = await store.recordAttestation(org, confirmed(0n));
+    const one = await store.recordAttestation(org, confirmed(1n));
+    await store.recordAttestation(org, confirmed(1n, { series: 1n }));
+    await store.recordAttestation(org, sent());
+
+    expect(await store.snapshotAttestations(org, 0n, [0n, 1n, 7n])).toEqual([one, zero]);
+    expect(await store.snapshotAttestations(org, 0n, [7n])).toEqual([]);
+    expect(await store.snapshotAttestations(org, 0n, [])).toEqual([]);
+  });
+
+  it('open their commitment from their own row and under the master key, and from nowhere else', async () => {
+    const { store, org, addOrg } = await setup();
+    await store.recordAttestation(org, confirmed(0n, { treasury: opening(2) }));
+    await store.recordAttestation(org, sent({ treasury: opening(3) }));
+    await store.recordAttestation(org, refusedBeforeSending());
+
+    expect(await store.openAttestation(org, 0n, 0n)).toEqual(opening(2));
+    expect(await store.openAttestation(org, 0n, 1n)).toBeNull();
+    expect(await store.openAttestation(org, 1n, 0n)).toBeNull();
+    const other = await addOrg();
+    expect(await store.openAttestation(other, 0n, 0n)).toBeNull();
+
+    const stranger = pgStore(connection.db, { masterKey: new Uint8Array(32).fill(9) });
+    await expect(stranger.openAttestation(org, 0n, 0n)).rejects.toThrow('the secret could not be decrypted');
+
+    // An envelope copied under another organisation, or beside another commitment, does not open there.
+    const [row] = await rowsOf<{ salt_enc: string }>('select salt_enc from holdfast.attestations where org_id = $1 and number = 0', [org]);
+    const copy = "insert into holdfast.attestations (org_id, series, number, tx, journal_count, journal_root, treasury_zat, salt_enc, commitment, sent_at, status) values ($1, $2, 0, '0xcopied', 1, '0x11', 1, $3, $4, now(), 'confirmed')";
+    await connection.client.query(copy, [other, 0, row?.salt_enc, opening(2).commitment]);
+    await expect(store.openAttestation(other, 0n, 0n)).rejects.toThrow('the secret could not be decrypted');
+    await connection.client.query(copy, [org, 5, row?.salt_enc, opening(3).commitment]);
+    await expect(store.openAttestation(org, 5n, 0n)).rejects.toThrow('the secret could not be decrypted');
+  });
+
+  it('are refused when they contradict themselves, or belong to nobody', async () => {
+    const { store, org } = await setup();
+    await expect(store.recordAttestation(org, sent({ number: 0n }))).rejects.toThrow('a snapshot has a number once the chain holds it');
+    await expect(store.recordAttestation(org, sent({ status: 'confirmed' }))).rejects.toThrow('a snapshot has a number once the chain holds it');
+    await expect(store.recordAttestation(org, sent({ treasury: null }))).rejects.toThrow('an attestation that was sent carries a treasury commitment');
+    await expect(store.recordAttestation('nobody', sent())).rejects.toThrow();
+    expect(await store.listAttestations(org)).toEqual([]);
   });
 });

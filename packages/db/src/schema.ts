@@ -12,6 +12,7 @@ import {
   primaryKey,
   text,
   unique,
+  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
 import { baseUnits, epochMs, freeText, json, zat } from './columns';
@@ -23,7 +24,7 @@ export const holdfast = pgSchema('holdfast');
 // on its own, so nothing here is imported from the workspace at run time.
 const ZERO_ROOT: Hex = `0x${'00'.repeat(32)}`;
 
-export const KEY_KINDS = ['hl_agent', 'tempo_access', 'tempo_sponsor', 'solana_delegate'] as const;
+export const KEY_KINDS = ['hl_agent', 'tempo_access', 'tempo_sponsor', 'solana_delegate', 'hl_attester'] as const;
 /**
  * A kind has one active key. A revoked one is no longer used by the service;
  * whether its chain still honours it is for the chain to say.
@@ -32,6 +33,14 @@ export const KEY_STATUSES = ['active', 'revoked'] as const;
 export const SWAP_PURPOSES = ['margin', 'payout_float', 'unlock'] as const;
 export const PAYOUT_CHAINS = ['tempo', 'solana'] as const;
 export const PAYOUT_STATUSES = ['draft', 'approved', 'sending', 'paid', 'failed', 'refused'] as const;
+/**
+ * How an attempt to record a snapshot stands. `pending`: sent, and the chain
+ * has not shown it yet. `confirmed`: the chain holds the snapshot. `reverted`:
+ * the chain included the transaction and recorded nothing. `refused`: the
+ * contract turned it down because the journal no longer continues the series.
+ * `lost`: sent, and never seen on chain.
+ */
+export const ATTESTATION_STATUSES = ['pending', 'confirmed', 'reverted', 'refused', 'lost'] as const;
 
 const oneOf = (values: readonly string[]) => sql.raw(values.map((v) => `'${v}'`).join(', '));
 
@@ -325,6 +334,49 @@ export const auditLinks = holdfast
       createdAt: epochMs('created_at').notNull().default(sql`now()`),
     },
     (t) => [index('audit_links_org_idx').on(t.orgId)],
+  )
+  .enableRLS();
+
+/** Snapshots the service asked the HedgeAttestor contract to record, and how each attempt ended. */
+export const attestations = holdfast
+  .table(
+    'attestations',
+    {
+      id: uuid('id').primaryKey().defaultRandom(),
+      orgId: text('org_id')
+        .notNull()
+        .references(() => orgs.id),
+      /** The series the attempt was made in; for a confirmed one, the series the chain put the snapshot in. */
+      series: baseUnits('series').notNull(),
+      /** Position of the snapshot in its series; null unless the chain holds it. */
+      number: baseUnits('number'),
+      /** Null for an attempt the contract refused before anything was sent. */
+      tx: text('tx'),
+      journalCount: baseUnits('journal_count').notNull(),
+      journalRoot: text('journal_root').$type<Hex>().notNull(),
+      /** What the commitment hides: the balance, and the salt encrypted like every other secret. */
+      treasuryZat: zat('treasury_zat'),
+      saltEnc: text('salt_enc'),
+      commitment: text('commitment').$type<Hex>(),
+      /** When the transaction was sent; for an attempt that sent none, when the contract's refusal was read. */
+      sentAt: epochMs('sent_at').notNull(),
+      status: text('status', { enum: ATTESTATION_STATUSES }).notNull(),
+      /** Why the attempt recorded no snapshot. */
+      detail: freeText('detail'),
+    },
+    (t) => [
+      index('attestations_org_idx').on(t.orgId, t.sentAt),
+      // One at a time for an organisation: while the end of a transaction is not known, no other can be
+      // written down, and what is not written down is not sent.
+      uniqueIndex('attestations_pending_key').on(t.orgId).where(sql`${t.status} = 'pending'`),
+      unique('attestations_tx_key').on(t.orgId, t.tx),
+      unique('attestations_snapshot_key').on(t.orgId, t.series, t.number),
+      check('attestations_status_is_known', sql`${t.status} in (${oneOf(ATTESTATION_STATUSES)})`),
+      // Whatever was sent carries a commitment, and what opens it is kept.
+      check('attestations_sent_has_commitment', sql`${t.tx} is null or (${t.treasuryZat} is not null and ${t.saltEnc} is not null and ${t.commitment} is not null)`),
+      // Only a snapshot the chain holds has a number.
+      check('attestations_number_is_confirmed', sql`(${t.number} is not null) = (${t.status} = 'confirmed')`),
+    ],
   )
   .enableRLS();
 

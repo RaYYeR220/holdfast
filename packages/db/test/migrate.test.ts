@@ -4,6 +4,7 @@ import { MIGRATIONS, type Migration, type PgliteConnection, connectPglite, migra
 import { STARTUP_TIMEOUT_MS, pgUnderTest } from './support/stores';
 
 const TABLES = [
+  'attestations',
   'audit_links',
   'auth_nonces',
   'journal',
@@ -23,6 +24,7 @@ const TABLES = [
 const INITIAL = MIGRATIONS[0] as Migration;
 const LEASE_TOKEN = MIGRATIONS[1] as Migration;
 const APPLICATION = MIGRATIONS[2] as Migration;
+const ATTESTATIONS = MIGRATIONS[3] as Migration;
 const ALL = MIGRATIONS.map((migration) => migration.name);
 
 const SCRATCH: Migration = {
@@ -53,7 +55,8 @@ describe('the embedded migrations', () => {
     expect(statements).toHaveLength(45);
     expect(migrationStatements(LEASE_TOKEN)).toHaveLength(1);
     expect(migrationStatements(APPLICATION)).toHaveLength(21);
-    for (const statement of statements) {
+    expect(migrationStatements(ATTESTATIONS)).toHaveLength(7);
+    for (const statement of [...statements, ...migrationStatements(ATTESTATIONS)]) {
       expect(statement).not.toContain('statement-breakpoint');
       expect(statement.endsWith(';')).toBe(true);
     }
@@ -64,13 +67,14 @@ describe('the embedded migrations', () => {
   });
 
   it('have not changed since they were applied to the hosted database', () => {
-    expect(ALL.slice(0, 2)).toEqual(['0000_initial', '0001_lease_token']);
+    expect(ALL.slice(0, 3)).toEqual(['0000_initial', '0001_lease_token', '0002_application']);
     expect(migrationHash(INITIAL)).toBe('4fc90d09a5d4b7d668d16f8c810b17d29ba96a2700e379fdfd1e3363e2dbcea0');
     expect(migrationHash(LEASE_TOKEN)).toBe('9abb5fb502ef411d1a2334d9d94cf50330b33437416d1f516de4441a6d9a73d2');
+    expect(migrationHash(APPLICATION)).toBe('a69a36df0c0167549d0dbad9fe3a7d9c5dc9933c3ce8e8809cd06b9bff18a680');
   });
 
   it('are listed in the order they were written', () => {
-    expect(ALL).toEqual(['0000_initial', '0001_lease_token', '0002_application']);
+    expect(ALL).toEqual(['0000_initial', '0001_lease_token', '0002_application', '0003_attestations']);
   });
 
   it('hash the same whatever the line endings', () => {
@@ -160,16 +164,24 @@ describe('migrate', () => {
     expect(await store.loadOrg(org)).toMatchObject({ id: org });
   });
 
-  it('can have the SQL of its latest migration run again, statement by statement, without losing anything', async () => {
+  it('can have the SQL of its later migrations run again, statement by statement, without losing anything', async () => {
     const { store, addOrg } = pgUnderTest(connection.db);
     const org = await addOrg();
     const lines = () => [{ payeeName: 'Ada', toAddress: '0x01', amount: 100n, memo: 'INV-1', reference: 'INV-1' }];
     const run = await store.createPayoutRun(org, { chain: 'tempo', token: '0xt0', tokenSymbol: 'USDC.e', tokenDecimals: 6, account: '0xacc', notBefore: null, at: Date.parse('2026-10-07T00:00:00Z'), lines });
+    await store.installKey(org, { kind: 'hl_attester', address: '0xattester', secret: '0xsecret-of-the-attester' });
+    const treasury = { zat: 5_000_000n, salt: `0x${'5a'.repeat(32)}`, commitment: `0x${'c0'.repeat(32)}` } as const;
+    const attestation = await store.recordAttestation(org, { series: 0n, number: 0n, tx: '0xa1', journalCount: 3n, journalRoot: `0x${'11'.repeat(32)}`, treasury, sentAt: Date.parse('2026-10-12T00:00:00Z'), status: 'confirmed', detail: null });
 
-    for (const statement of migrationStatements(APPLICATION)) await connection.client.query(statement);
+    for (const migration of [APPLICATION, ATTESTATIONS]) {
+      for (const statement of migrationStatements(migration)) await connection.client.query(statement);
+    }
 
     expect(await store.loadOrg(org)).toMatchObject({ id: org });
     expect(await store.findPayoutRun(org, run.id)).toEqual(run);
+    expect(await store.activeKey(org, 'hl_attester')).toEqual({ address: '0xattester', secret: '0xsecret-of-the-attester' });
+    expect(await store.listAttestations(org)).toEqual([attestation]);
+    expect(await store.openAttestation(org, 0n, 0n)).toEqual(treasury);
     expect(await migrate(connection.db)).toEqual([]);
   });
 
@@ -302,7 +314,7 @@ describe('migrate, on a database that holds payout runs from before they were nu
         ('HF-2026-10-0002', 1, 'Linus', 'So1', 50, 'INV-7', null, null);
     `);
 
-    expect(await migrate(db)).toEqual(['0002_application']);
+    expect(await migrate(db)).toEqual(['0002_application', '0003_attestations']);
     expect(await migrate(db)).toEqual([]);
 
     const { rows } = await client.query('select org_id, run_id, line_no, reference, receipt_token from holdfast.payout_lines order by run_id, line_no');
@@ -342,5 +354,67 @@ describe('migrate, on a database that holds payout runs from before they were nu
         `insert into holdfast.payout_lines (org_id, run_id, line_no, payee_name, to_address, amount, memo) values ('other', 'HF-2026-10-0001', 9, 'x', 'y', 1, 'm')`,
       ),
     ).rejects.toThrow(/foreign key/);
+  });
+});
+
+describe('migrate, on a database that holds service keys from before there was an attester', () => {
+  let connection: PgliteConnection;
+
+  beforeAll(async () => {
+    connection = await connectPglite();
+    await migrate(connection.db, [INITIAL, LEASE_TOKEN, APPLICATION]);
+  }, STARTUP_TIMEOUT_MS);
+
+  afterAll(() => connection.close());
+
+  const KEY = "insert into holdfast.keys (org_id, kind, address, secret_enc, status) values ('before', $1, $2, 'v1.x.y.z', 'active')";
+  const kinds = async (): Promise<string[]> => {
+    const { rows } = await connection.client.query<{ kind: string }>('select kind from holdfast.keys order by kind');
+    return rows.map((row) => row.kind);
+  };
+
+  it('lets an organisation hold an attester key, keeps the keys it has, and still refuses a kind nobody knows', async () => {
+    const { client, db } = connection;
+    await client.query("insert into holdfast.orgs (id, name, ufvk_enc, birthday, hl_user, policy) values ('before', 'Before', 'v1.x.y.z', 1, '0xabc', '{}')");
+    for (const kind of ['hl_agent', 'tempo_access', 'tempo_sponsor', 'solana_delegate']) await client.query(KEY, [kind, `address-of-${kind}`]);
+    await expect(client.query(KEY, ['hl_attester', '0xattester'])).rejects.toThrow(/keys_kind_is_known/);
+
+    expect(await migrate(db)).toEqual(['0003_attestations']);
+    expect(await migrate(db)).toEqual([]);
+
+    expect(await kinds()).toEqual(['hl_agent', 'solana_delegate', 'tempo_access', 'tempo_sponsor']);
+    await client.query(KEY, ['hl_attester', '0xattester']);
+    expect(await kinds()).toContain('hl_attester');
+    await expect(client.query(KEY, ['bogus', '0xbogus'])).rejects.toThrow(/keys_kind_is_known/);
+  });
+
+  it('holds an attestation to what its status says of it', async () => {
+    const { client } = connection;
+    const row = (over: Record<string, string | null>) => {
+      const values = { number: null, tx: null, treasury_zat: null, salt_enc: null, commitment: null, status: "'pending'", ...over };
+      return client.query(
+        `insert into holdfast.attestations (org_id, series, number, tx, journal_count, journal_root, treasury_zat, salt_enc, commitment, sent_at, status)
+         values ('before', 0, ${values.number}, ${values.tx}, 3, '0x11', ${values.treasury_zat}, ${values.salt_enc}, ${values.commitment}, '2026-10-12T00:00:00Z', ${values.status})`,
+      );
+    };
+    const sent = { tx: "'0xa1'", treasury_zat: '5000000', salt_enc: "'v1.x.y.z'", commitment: "'0xc0'" };
+
+    await expect(row({ status: "'dreamt'" })).rejects.toThrow(/attestations_status_is_known/);
+    // Whatever was sent has a commitment, and what opens it.
+    await expect(row({ tx: "'0xa0'" })).rejects.toThrow(/attestations_sent_has_commitment/);
+    await expect(row({ ...sent, tx: "'0xa0'", salt_enc: null })).rejects.toThrow(/attestations_sent_has_commitment/);
+    // A snapshot has a number exactly when the chain holds it.
+    await expect(row({ ...sent, number: '0' })).rejects.toThrow(/attestations_number_is_confirmed/);
+    await expect(row({ ...sent, status: "'confirmed'" })).rejects.toThrow(/attestations_number_is_confirmed/);
+
+    await row({ ...sent, number: '0', status: "'confirmed'" });
+    await row({ status: "'refused'" });
+    // One transaction is one attestation, and one snapshot is one too.
+    await expect(row({ ...sent, status: "'pending'" })).rejects.toThrow(/attestations_tx_key/);
+    await expect(row({ ...sent, tx: "'0xa2'", number: '0', status: "'confirmed'" })).rejects.toThrow(/attestations_snapshot_key/);
+    // And one pending at a time.
+    await row({ ...sent, tx: "'0xb1'" });
+    await expect(row({ ...sent, tx: "'0xb2'" })).rejects.toThrow(/attestations_pending_key/);
+    await expect(client.query("insert into holdfast.attestations (org_id, series, journal_count, journal_root, sent_at, status) values ('nobody', 0, 0, '0x00', now(), 'refused')")).rejects.toThrow(/foreign key/);
   });
 });

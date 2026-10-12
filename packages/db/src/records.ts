@@ -1,10 +1,10 @@
 import type { Hex, Policy } from '@holdfast/core';
-import type { KEY_KINDS, KEY_STATUSES, PAYOUT_CHAINS, PAYOUT_STATUSES, SWAP_PURPOSES } from './schema';
+import type { ATTESTATION_STATUSES, KEY_KINDS, KEY_STATUSES, PAYOUT_CHAINS, PAYOUT_STATUSES, SWAP_PURPOSES } from './schema';
 
 /**
  * The rows the application reads and writes beside the engine's own: service
- * keys, swaps, payout runs, refusals, auditor links. Amounts are bigint in
- * base units; times are epoch milliseconds.
+ * keys, swaps, payout runs, refusals, auditor links, attestations. Amounts
+ * are bigint in base units; times are epoch milliseconds.
  */
 
 export type KeyKind = (typeof KEY_KINDS)[number];
@@ -12,6 +12,7 @@ export type ServiceKeyStatus = (typeof KEY_STATUSES)[number];
 export type SwapPurpose = (typeof SWAP_PURPOSES)[number];
 export type PayoutChain = (typeof PAYOUT_CHAINS)[number];
 export type PayoutStatus = (typeof PAYOUT_STATUSES)[number];
+export type AttestationStatus = (typeof ATTESTATION_STATUSES)[number];
 
 /** An organisation's row without the viewing key and without the tick lease. */
 export interface OrgRecord {
@@ -199,6 +200,54 @@ export interface AuditLinkRow extends NewAuditLink {
   revokedAt: number | null;
   createdAt: number;
 }
+
+/** What a treasury commitment was made from. Whoever holds both halves can show what the commitment hides. */
+export interface TreasuryOpening {
+  /** The shielded balance that was committed to, in zatoshi. */
+  zat: bigint;
+  /** The 32 random bytes that hide it, as hex. Stored encrypted and never listed. */
+  salt: Hex;
+  commitment: Hex;
+}
+
+export interface NewAttestation {
+  /** The series the attempt was made in. */
+  series: bigint;
+  /** Position of the snapshot in that series; given with the status `confirmed` and with no other. */
+  number: bigint | null;
+  /** Null for an attempt the contract refused before anything was sent. */
+  tx: string | null;
+  journalCount: bigint;
+  journalRoot: Hex;
+  /** Null only where nothing was sent, so nothing was committed to. */
+  treasury: TreasuryOpening | null;
+  /** When the transaction was sent, ms; for an attempt that sent none, when the refusal was read. */
+  sentAt: number;
+  status: AttestationStatus;
+  /** Why the attempt recorded no snapshot. */
+  detail: string | null;
+}
+
+/** An attestation as it may be listed: without the balance and the salt its commitment hides. */
+export interface AttestationRow {
+  id: string;
+  orgId: string;
+  series: bigint;
+  number: bigint | null;
+  tx: string | null;
+  journalCount: bigint;
+  journalRoot: Hex;
+  commitment: Hex | null;
+  sentAt: number;
+  status: AttestationStatus;
+  detail: string | null;
+}
+
+/** How an attestation that was pending ended. */
+export type AttestationOutcome =
+  /** The chain holds the snapshot, in this series and under this number. */
+  | { status: 'confirmed'; series: bigint; number: bigint }
+  | { status: 'reverted' | 'refused' | 'lost'; detail: string };
 
 const RUN_ID = /^HF-(\d{4})-(\d{2})-(\d{4})$/;
 export const MAX_RUNS_PER_MONTH = 9_999;
