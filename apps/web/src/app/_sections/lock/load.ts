@@ -6,6 +6,7 @@ import { type Failure, type Outcome, PAGE_PATIENCE_MS, failureOf, within } from 
 import { runtime } from '@/server/runtime';
 import { type BacktestResult, loadBacktest } from '../../_lib/backtest';
 import { loadDemo } from '../../_lib/demo';
+import { keep } from '../../_lib/keep';
 import type { LockParams, SnapshotRef } from './params';
 
 /**
@@ -67,8 +68,15 @@ async function readLock(org: OrgRecord, overview: DemoOverview, params: LockPara
   return { org: { id: org.id, name: org.name, publicDemo: org.publicDemo }, overview, lock, journal, snapshots, proof, backtest };
 }
 
+/** The demo's lock is the same for every visitor, so a read is kept for a few seconds; a proof under a snapshot does not change. */
+const keptLock = keep<LockRead>(15_000, 64);
+
 /** The lock of the public demo treasury. */
-export async function loadDemoLock(params: LockParams): Promise<LockRead> {
+export function loadDemoLock(params: LockParams): Promise<LockRead> {
+  return keptLock(JSON.stringify([params.before, params.check, params.snapshot === null ? null : [String(params.snapshot.series), String(params.snapshot.number)]]), () => readDemoLock(params));
+}
+
+async function readDemoLock(params: LockParams): Promise<LockRead> {
   const demo = await loadDemo();
   if (demo.status !== 'ok') return demo;
   const deps = runtime();

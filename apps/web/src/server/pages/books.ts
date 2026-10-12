@@ -197,7 +197,15 @@ export async function demoBooksPage(deps: BooksDeps, org: OrgRecord, range: Date
     ...page,
     statement: { ...page.statement, payouts: payouts === null ? null : { ...payouts, byPayee: [] } },
     ledger: page.ledger.map((entry) => (entry.kind === 'payout' ? { ...entry, counterparty: null } : entry)),
+    // A payout that does not match is described with the addresses involved; the public face says only that it does not match.
+    reconciliation: mapChecks(page.reconciliation, (check) =>
+      check.id === 'payouts' ? { ...check, problems: check.problems.map((problem) => ({ ...problem, detail: 'a payout line and the transfer on its chain do not agree; the owner sees which' })) } : check,
+    ),
   };
+}
+
+function mapChecks(reading: Reading<ReconciliationCheck[]>, change: (check: ReconciliationCheck) => ReconciliationCheck): Reading<ReconciliationCheck[]> {
+  return reading.status === 'ok' ? { ...reading, value: reading.value.map(change) } : reading;
 }
 
 export interface AuditPage {

@@ -4,6 +4,7 @@ import { type TreasuryPage, treasuryPage } from '@/server/pages/treasury';
 import { type Failure, PAGE_PATIENCE_MS, failureOf, within } from '@/server/pages/treasury-lock-reads';
 import { runtime } from '@/server/runtime';
 import { loadDemo } from '../../_lib/demo';
+import { keep } from '../../_lib/keep';
 
 /**
  * The Treasury page's read, made once for a request on the real
@@ -23,8 +24,14 @@ async function read(org: OrgRecord): Promise<TreasuryData> {
   return { org: { id: org.id, name: org.name, publicDemo: org.publicDemo, hasSolanaWallet: org.solanaOwner !== null }, treasury };
 }
 
-/** The treasury of the public demo. */
-export async function loadDemoTreasury(): Promise<TreasuryRead> {
+const keptTreasury = keep<TreasuryRead>(15_000, 1);
+
+/** The treasury of the public demo; one read serves every visitor for a few seconds. */
+export function loadDemoTreasury(): Promise<TreasuryRead> {
+  return keptTreasury('demo', readDemoTreasury);
+}
+
+async function readDemoTreasury(): Promise<TreasuryRead> {
   const demo = await loadDemo();
   if (demo.status !== 'ok') return demo;
   const deps = runtime();

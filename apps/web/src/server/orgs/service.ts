@@ -6,7 +6,7 @@ import { getAddress, isAddress } from 'viem';
 import { newAttesterKey } from '../attestations/service';
 import { type HoldfastNetwork, looksLikeSolanaAddress } from '../config';
 import type { Deps } from '../deps';
-import { invalid } from '../errors';
+import { invalid, refused } from '../errors';
 
 /** Sapling is the oldest pool a viewing key reads; no treasury can hold funds from before it activated. */
 const FIRST_SHIELDED_BLOCK: Record<HoldfastNetwork, number> = { mainnet: 419_200, testnet: 280_000 };
@@ -88,6 +88,9 @@ async function view(deps: Pick<Deps, 'store' | 'network'>, org: OrgRecord): Prom
   };
 }
 
+/** How many organisations one address may register on a deployment. */
+export const MAX_ORGANISATIONS_PER_OWNER = 3;
+
 /**
  * Register an organisation for `owner`, the address that signed in. The
  * treasury is known only through its viewing key, which is checked to be one
@@ -101,6 +104,10 @@ export async function createOrganisation(deps: Pick<Deps, 'store' | 'network' | 
   const ufvk = input.ufvk.trim();
   const checked = deps.zcash.check(ufvk);
   if (!checked.ok) throw invalid(`the viewing key was not accepted: ${redactViewingKeys(checked.error, ufvk)}`);
+
+  // Each organisation can have the deployment's fee sponsor pay for its key authorizations, so one address does not get an unbounded number of them.
+  const owned = await deps.store.listOrgs({ owner });
+  if (owned.length >= MAX_ORGANISATIONS_PER_OWNER) throw refused(`this address already owns ${owned.length} organisations, which is as many as one address may register here`);
 
   const earliest = FIRST_SHIELDED_BLOCK[deps.zcash.network];
   if (input.birthday < earliest) throw invalid(`the birthday height is before block ${earliest}, where shielded funds first became possible`);

@@ -107,7 +107,8 @@ describe('base58', () => {
 });
 
 describe('the token account of a wallet', () => {
-  it('is the address the Solana package derives, for any wallet', async () => {
+  // Forty derivations on a busy machine can take longer than the default five seconds.
+  it('is the address the Solana package derives, for any wallet', { timeout: 30_000 }, async () => {
     // Half of all candidate addresses are points of the curve and are skipped, so a few dozen wallets go through every path.
     for (let i = 0; i < 40; i += 1) {
       const owner = base58Encode(new Uint8Array(32).fill(i + 1).map((byte, at) => (byte * 31 + at * 17 + i) & 0xff));

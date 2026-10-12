@@ -150,6 +150,8 @@ Each of these stops something. None of them moves money.
 - An attester key without HYPE for gas, or a HyperEVM endpoint that cannot be reached, stops new snapshots. The attestation step runs after a tick and cannot change what the tick did.
 - Many organisations. One call to the tick endpoint works for at most 240 seconds, four organisations at a time, and reports the ones it did not reach as skipped.
 - A long Hyperliquid history. The exchange serves the latest 10,000 fills of an account. Past that, `holdfast verify` fails its Hyperliquid step, because the beginning can no longer be shown.
+- Public pages. The demo pages and the public demo routes read chains, a venue and the journal for anyone who asks, and a proof of a journal entry reads the journal up to the snapshot. Answers are kept for ten to sixty seconds so that a burst costs one read, and nothing in the application limits the rate of requests. A deployment that is open to the public needs a limit in front of it.
+- The fee sponsor is shared. Every organisation on a deployment can have its sponsor pay for the authorization and the revocation of its Tempo keys. One address registers at most three organisations and the service makes at most four access keys for each, but addresses are free, so the bound is per address and not on the sponsor. The sponsor of this deployment holds a few dollars of fee tokens, and when it runs out Tempo payouts stop for everybody until it is topped up. An open deployment needs a spending cap on it.
 
 ## What the treasurer has to do
 
@@ -159,6 +161,10 @@ Each of these stops something. None of them moves money.
 - Choose the limits: a Tempo limit and period no larger than a payroll needs, a list of recipients, an expiry; a Solana allowance no larger than the next runs need.
 - Revoke when in doubt, and when the service is no longer used: replace the agent on Hyperliquid, revoke the access key on Tempo, sign `Revoke` on Solana, name a new attester and start a new series, delete auditor links. Move the treasury to a new account if the viewing key may have leaked.
 - When self-hosting: back up the master key apart from the database, keep the scheduler running, and set `SOLANA_MARKERS_FROM`.
+
+## What a public demo publishes
+
+An organisation is a public demo only if its owner made it one. For such an organisation anyone can read: the treasury's address, its balance, its payments in and out with their memos, its swaps, the hedge and the journal, both payout rails, every paid run with the receipt of each line (the address that was paid and the payee's reference), the books, and each key's address and scope. Nothing of an organisation that is not a demo is served by these pages or routes.
 
 ## Not covered
 

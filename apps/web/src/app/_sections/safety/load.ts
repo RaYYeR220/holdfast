@@ -5,6 +5,7 @@ import { agentApprovalOf } from '@/server/pages/lock';
 import { safetyFacts } from '@/server/pages/safety';
 import type { KeyScope } from '@/server/safety/scopes';
 import { safetyOf } from '@/server/safety/service';
+import { keep } from '../../_lib/keep';
 import { type Attempt, attempt } from './attempt';
 import type { SafetyData } from './model';
 
@@ -24,6 +25,13 @@ function withAgentScope(keys: KeyScope[], approval: Awaited<ReturnType<typeof ag
 
 /** The demo treasury's keys, refusals and latest snapshot, from the public read model. */
 export function loadDemoSafety(orgId: string): Promise<Attempt<SafetyData>> {
+  return keptSafety(orgId, () => readDemoSafety(orgId));
+}
+
+/** Every scope is read from its chain; for the public demo one reading serves every visitor for a few seconds. */
+const keptSafety = keep<Attempt<SafetyData>>(15_000, 8);
+
+function readDemoSafety(orgId: string): Promise<Attempt<SafetyData>> {
   return attempt(async (deps) => {
     const org = await demoOrg(deps, orgId);
     const [safety, facts, approval] = await Promise.all([demoSafety(deps, org), safetyFacts(deps, org), agentApprovalOf(deps, org)]);

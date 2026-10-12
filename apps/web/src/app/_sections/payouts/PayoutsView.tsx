@@ -113,7 +113,7 @@ export function PayoutsView({ audience, data, now, base, tempoActions, solanaAct
           rule
           lead={
             open
-              ? 'A run is a list of payments made in one transaction on one rail. The public page lists the runs that were paid and does not name the payees.'
+              ? 'A run is a list of payments made in one transaction on one rail. The public page lists the runs that were paid and does not name the payees; each run’s page links the receipts of its lines.'
               : 'A run is a list of payments made in one transaction on one rail. Newest first, with the state of each as the record has it.'
           }
         />

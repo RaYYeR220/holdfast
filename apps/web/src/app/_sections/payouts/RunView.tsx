@@ -244,7 +244,7 @@ export function RunView({ audience, page, now, base, origin, actions }: RunViewP
           rule
           lead={
             audience === 'public'
-              ? 'The public page does not name the payees. The addresses that were paid are in the transaction itself, on the chain.'
+              ? 'The public page does not name the payees. The addresses that were paid are in the transaction itself, on the chain. A demo treasury also publishes each line’s receipt here, the page a payee is sent: it shows the address that was paid and the payee’s reference.'
               : `Each line is one transfer of ${run.token.symbol ?? 'the token'}. ${paid ? 'Send each payee the link to their receipt.' : 'A line has a receipt once the run is paid.'}`
           }
         />

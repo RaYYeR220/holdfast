@@ -224,6 +224,21 @@ describe('organisations', () => {
     expect((await call(w, getMe, 'GET', { cookie })).body.orgs).toEqual(mine.body.orgs);
   });
 
+  it('let one address register a bounded number of organisations, and no more', async () => {
+    const owner = newAccount();
+    const cookie = await sessionOf(w, owner.address);
+    for (const name of ['First', 'Second', 'Third']) expect((await call(w, postOrg, 'POST', { cookie, body: { ...input, name } })).status).toBe(201);
+
+    const fourth = await call(w, postOrg, 'POST', { cookie, body: { ...input, name: 'Fourth' } });
+    expect(fourth.status).toBe(409);
+    expect(fourth.body.error).toBe('refused');
+    expect((await call(w, getOrgs, 'GET', { cookie })).body.orgs).toHaveLength(3);
+
+    // The bound is per address: another owner is not affected by it.
+    const other = await sessionOf(w, newAccount().address);
+    expect((await call(w, postOrg, 'POST', { cookie: other, body: input })).status).toBe(201);
+  });
+
   it('say which network the deployment is on, the same when read, registered and changed', async () => {
     const owner = newAccount();
     const cookie = await sessionOf(w, owner.address);

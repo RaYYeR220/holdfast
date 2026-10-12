@@ -1,4 +1,5 @@
 import { cache } from 'react';
+import { keep } from './keep';
 import { type DemoJournal, type DemoOverview, demoJournal, demoList, demoOrg, demoOverview } from '@/server/demo/service';
 import { ApiError, ConfigError } from '@/server/errors';
 import { messageOf } from '@/server/redact';
@@ -58,8 +59,14 @@ function failureOf(error: unknown, at: number): Failure {
   return { source: 'database', reason: 'the database could not be read', at };
 }
 
-/** The demo treasury, read once for a request and shared by the layout and the page. */
-export const loadDemo = cache(async (): Promise<DemoRead> => {
+/** How long a read of the demo treasury is kept for the next visitor, ms. */
+const KEPT_MS = 10_000;
+const kept = keep<DemoRead>(KEPT_MS, 1);
+
+/** The demo treasury, read once for a request and shared by the layout and the page; a read a few seconds old is shared between requests. */
+export const loadDemo = cache((): Promise<DemoRead> => kept('demo', readDemo));
+
+async function readDemo(): Promise<DemoRead> {
   const deps = runtime();
   const at = deps.now();
   const read = async (): Promise<DemoRead> => {
@@ -80,4 +87,4 @@ export const loadDemo = cache(async (): Promise<DemoRead> => {
   } catch (error) {
     return { status: 'unavailable', ...failureOf(error, at) };
   }
-});
+}

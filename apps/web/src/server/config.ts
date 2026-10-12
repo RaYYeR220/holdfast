@@ -288,9 +288,15 @@ export function readConfig(env: Env): Config {
       return network() === 'mainnet' ? settings : null;
     }),
 
-    secrets: () =>
-      ['DATABASE_URL', 'HOLDFAST_MASTER_KEY', 'TICK_SECRET', 'SESSION_SECRET', 'TEMPO_SPONSOR_PRIVATE_KEY', 'ONECLICK_API_KEY', 'TEMPO_RPC_URL', 'SOLANA_RPC_URL', 'HYPEREVM_RPC_URL']
+    secrets: () => [
+      ...['DATABASE_URL', 'HOLDFAST_MASTER_KEY', 'TICK_SECRET', 'SESSION_SECRET', 'TEMPO_SPONSOR_PRIVATE_KEY', 'ONECLICK_API_KEY', 'TEMPO_RPC_URL', 'SOLANA_RPC_URL', 'HYPEREVM_RPC_URL']
         .map((name) => optional(name))
         .filter((value): value is string => value !== undefined),
+      // An endpoint of one's own may carry a token in its address; each is kept out of messages by itself.
+      ...(optional('ZCASH_ENDPOINTS') ?? '')
+        .split(',')
+        .map((endpoint) => endpoint.trim())
+        .filter((endpoint) => endpoint !== ''),
+    ],
   };
 }

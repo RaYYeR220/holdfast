@@ -165,6 +165,9 @@ export async function submitTempoRevoke(deps: RailDeps, org: OrgRecord, submissi
   return { tx: result.tx, txUrl: deps.tempo.txUrl(result.tx) };
 }
 
+/** How many Tempo access keys the service makes for one organisation over its life, the first included. */
+export const MAX_TEMPO_KEYS_PER_ORGANISATION = 4;
+
 /**
  * Give the organisation a new Tempo access key in the place of one that is
  * dead. A key the root revoked can never be authorized again and an expired
@@ -194,6 +197,10 @@ export async function replaceTempoAccessKey(deps: RailDeps, org: OrgRecord): Pro
     if (key.expiresAt !== null) throw refused(`the chain holds access key ${accessKey} on this account with an expiry it does not state; revoke it before a new key takes its place`);
     throw refused(`access key ${accessKey} was never authorized on this account; nothing is wrong with it, and it is not replaced`);
   }
+
+  // Every key made here can cost the fee sponsor an authorization and a revocation, so an organisation gets a bounded number of them.
+  const made = (await deps.store.listKeys(org.id)).filter((key) => key.kind === 'tempo_access').length;
+  if (made >= MAX_TEMPO_KEYS_PER_ORGANISATION) throw refused(`this organisation has already had ${made} access keys, which is as many as the service makes for one organisation`);
 
   const next = deps.tempo.newAccessKey();
   // Nothing is written when another request has put a key in the dead one's place already: either way one new key stands there.

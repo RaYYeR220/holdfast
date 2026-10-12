@@ -53,7 +53,8 @@ export function appRoutes(): Route[] {
       if (from === undefined) throw new Error(`${pattern} imports from src/server/api/${module}, which is not there`);
       for (const name of names.split(',').map((part) => part.trim()).filter((part) => part !== '')) imported.set(name, from);
     }
-    const bound = [...source.matchAll(/export const (GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) = bind\((\w+)\);/g)];
+    // A public route may be bound through the keeper of short-lived answers; the endpoint behind it is the same.
+    const bound = [...source.matchAll(/export const (GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) = (?:keepResponses\()?bind\((\w+)\)(?:, [\d_]+\))?;/g)];
     if (bound.length === 0) throw new Error(`${pattern} binds no endpoint`);
     for (const [, method = '', name = ''] of bound) {
       const endpoint = imported.get(name)?.[name];

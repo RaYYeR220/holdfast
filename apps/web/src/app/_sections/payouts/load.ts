@@ -9,6 +9,7 @@ import { type SolanaReads, solanaReads } from '@/server/pages/payouts-solana';
 import { messageOf } from '@/server/redact';
 import { runtime } from '@/server/runtime';
 import { loadDemo } from '../../_lib/demo';
+import { keep } from '../../_lib/keep';
 
 /**
  * What the Payouts pages and the receipt page read, straight from the
@@ -91,8 +92,15 @@ export interface PayoutsData {
   runs: Loaded<RunShown[]>;
 }
 
-/** The two rails as their chains report them now, and the runs. */
-export async function loadPayouts(org: OrgRecord, audience: Audience): Promise<PayoutsData> {
+const keptPayouts = keep<PayoutsData>(15_000, 8);
+const keptRun = keep<RunData>(15_000, 64);
+
+/** The two rails as their chains report them now, and the runs. The public page is the same for every visitor, so its read is kept for a few seconds. */
+export function loadPayouts(org: OrgRecord, audience: Audience): Promise<PayoutsData> {
+  return audience === 'public' ? keptPayouts(org.id, () => readPayouts(org, audience)) : readPayouts(org, audience);
+}
+
+async function readPayouts(org: OrgRecord, audience: Audience): Promise<PayoutsData> {
   const deps = runtime();
   const [tempo, solana, runs] = await Promise.all([
     attempt('tempo', () => tempoRailShown(deps, org)),
@@ -110,7 +118,11 @@ export interface RunData {
   solana: Loaded<SolanaRailShown> | null;
 }
 
-export async function loadRun(org: OrgRecord, runId: string, audience: Audience): Promise<RunData> {
+export function loadRun(org: OrgRecord, runId: string, audience: Audience): Promise<RunData> {
+  return audience === 'public' ? keptRun(JSON.stringify([org.id, runId]), () => readRun(org, runId, audience)) : readRun(org, runId, audience);
+}
+
+async function readRun(org: OrgRecord, runId: string, audience: Audience): Promise<RunData> {
   const deps = runtime();
   const page = await attempt('database', () => payoutRunShown(deps, org, runId, audience, reads()));
   const unpaid = audience === 'owner' && page.status === 'ok' && page.value !== null && page.value.run.status !== 'paid' ? page.value.run.chain : null;

@@ -2,6 +2,7 @@ import type { OrgRecord } from '@holdfast/db';
 import { type AuditLinkView, listLinks } from '@/server/books/audit-links';
 import { demoOrg } from '@/server/demo/service';
 import { type AuditPage, type BooksPage, auditPage, booksPage, demoBooksPage } from '@/server/pages/books';
+import { keep } from '../../_lib/keep';
 import { type Attempt, attempt } from '../safety/attempt';
 import type { Period } from './model';
 
@@ -16,9 +17,12 @@ const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 /** How long a page waits for the books: the venue's answer and, after it, the reconciliation's own patience. */
 const PATIENCE_MS = 30_000;
 
+/** Gathering the books reads a venue and two payout chains; for the public demo one gathering serves every visitor for a minute. */
+const keptBooks = keep<Attempt<BooksPage>>(60_000, 32);
+
 /** The demo treasury's books for a period, from its public face. */
 export function loadDemoBooks(orgId: string, period: Period): Promise<Attempt<BooksPage>> {
-  return attempt(async (deps) => demoBooksPage(deps, await demoOrg(deps, orgId), period.range), PATIENCE_MS);
+  return keptBooks(JSON.stringify([orgId, period.range]), () => attempt(async (deps) => demoBooksPage(deps, await demoOrg(deps, orgId), period.range), PATIENCE_MS));
 }
 
 export interface OwnerBooks {
