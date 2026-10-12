@@ -92,6 +92,7 @@ The team's wallet approved the service key as delegate for 1.50 USDC on its toke
 | A transfer one unit above the allowance, preflight skipped | failed on chain: Token program error `0x1` | [`5UpRY36z…wQiZq99`](https://solscan.io/tx/5UpRY36zNFBVJo6VwRsCUJmnEQbvxs2R1xCZzmSU2RNGBLSUALwWeHPPSH3MKK8ZroXEY3MsuiSaquoZjwQiZq99) |
 | The wallet revokes the delegate | allowance 0 | [`2naSHkBj…aMtkW5Su`](https://solscan.io/tx/2naSHkBjJeyd8bxKqFMoHEQBQMYwyk2rc37uRiwWRjPK8eV86X2t4LLworyKrMNgtEekU5sjr3PaqWZhaMtkW5Su) |
 | The former delegate tries to move one base unit | failed on chain: Token program error `0x4` | [`FjduxHjy…xrsrYVg`](https://solscan.io/tx/FjduxHjy1bqB1Nc4i6QbKkyUgEwEXMVsVmM4z3CFpYiJFfY8gsSaQ3t5azzDrB8czwHamboSwirDqN37xrsrYVg) |
+| The wallet approves the delegate again, for 0.75 USDC, so the demo treasury can go on paying | allowance 0.75 | [`9X2xYNdb…UgHHA3Jw`](https://solscan.io/tx/9X2xYNdbPvmi1KvKPrsH8k8fsCGN7LQyDD6bS12aQH9seM7a355LYpVZfCvgkkdtGZTPuLXXdVYjeUpUgHHA3Jw) |
 
 This run was paid before payout runs carried a marker. The marker, a System account that makes the chain itself refuse a second payment of the same run, is shown on devnet in [PROOF-solana-devnet.md](PROOF-solana-devnet.md) with a transaction for each property, including two payments of one run sent at the same moment.
 
@@ -101,7 +102,7 @@ Each decision is an entry whose digest covers its inputs, the decision and the e
 
 | Entry | Decision |
 |---|---|
-| 1 | hold: the lock was off |
+| 1 | hold, in the journal's words "short matches the treasury": the lock was off, so the target was no short, and there was none |
 | 2 | rebalance: sell 0.01 ZEC of the perpetual (the order in section 3) |
 | 3 | hold: the short matches the treasury |
 | 4 | hold: the short matches the treasury; margin ratio 89.9% |
