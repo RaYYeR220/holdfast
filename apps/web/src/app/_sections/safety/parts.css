@@ -1,0 +1,33 @@
+/* The pieces the Books, Safety and Settings pages share. */
+
+/* Where a figure was read and when. */
+.sx-asof {
+  font: var(--tx-s) var(--f-text);
+  font-style: italic;
+}
+
+/* What a wallet or the server said when an action failed: it may quote addresses and data with no place to break. */
+.sx-said {
+  overflow-wrap: anywhere;
+}
+
+.sx-full {
+  margin-top: var(--s2);
+}
+
+.sx-full summary {
+  cursor: pointer;
+  font: var(--tx-s) var(--f-text);
+  font-style: italic;
+}
+
+.sx-full p {
+  margin-top: var(--s2);
+  font: var(--num-s) var(--f-num);
+  overflow-wrap: anywhere;
+}
+
+/* The placeholders of a page that is being read. */
+.sx-reading > * + * {
+  margin-top: var(--s6);
+}

@@ -1,0 +1,593 @@
+/* The Safety page. Everything else on it is a primitive. */
+
+/* ---------- the ring: every key at a glance ---------- */
+.sf-ring {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--s6) var(--s5);
+}
+
+.sf-ring__key {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.sf-ring__plate,
+.sf-ring__pic {
+  height: 112px;
+}
+
+.sf-ring__name {
+  align-self: flex-start;
+  color: var(--fg);
+  text-decoration: none;
+  font: var(--px-1) var(--f-px);
+  font-weight: 500;
+  margin-top: var(--s3);
+  padding-bottom: 3px;
+  background: linear-gradient(90deg, var(--fg) 50%, #0000 50%) 0 100% / 8px 2px repeat-x;
+}
+
+.sf-ring__name:hover {
+  background-size: 8px 4px;
+}
+
+.sf-ring__chain {
+  font: var(--tx-s) var(--f-text);
+  font-style: italic;
+  margin-top: var(--s1);
+}
+
+.sf-ring__bound {
+  margin-top: var(--s2);
+}
+
+.sf-ring__bound .hf-tag {
+  white-space: normal;
+  align-items: flex-start;
+}
+
+.sf-ring__bound .hf-swatch {
+  margin-top: 2px;
+}
+
+.sf-ring__foot {
+  margin-top: var(--s6);
+  padding-top: var(--s4);
+  border-top: var(--rule-thin) solid var(--fg);
+  max-width: 62em;
+}
+
+/* ---------- one entry for each key ---------- */
+.sf-keys {
+  border-top: var(--rule) solid var(--fg);
+}
+
+.sf-key {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 4fr) minmax(0, 4fr);
+  column-gap: var(--s10);
+  row-gap: var(--s6);
+  padding: var(--s6) 0 var(--s8);
+  border-bottom: var(--rule) solid var(--fg);
+  scroll-margin-top: var(--s6);
+}
+
+.sf-key__who,
+.sf-key__now {
+  min-width: 0;
+}
+
+.sf-key__name {
+  font: var(--px-2) var(--f-px);
+  font-weight: 420;
+}
+
+.sf-key__job {
+  margin: var(--s2) 0 var(--s3);
+}
+
+.sf-key__job .hf-tag {
+  margin-right: var(--s2);
+}
+
+.sf-key__acct {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s1) var(--s4);
+  max-width: 100%;
+}
+
+.sf-key__law > div + div {
+  margin-top: var(--s4);
+  padding-top: var(--s4);
+  background: linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 0 / 8px 2px repeat-x;
+}
+
+.sf-key__law dt {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: 20px;
+  line-height: 24px;
+  margin-bottom: var(--s1);
+}
+
+.sf-key__law dt .hf-swatch {
+  width: 20px;
+  height: 20px;
+}
+
+.sf-key__nowhead {
+  font-size: 20px;
+  line-height: 24px;
+  margin-bottom: var(--s3);
+}
+
+.sf-key__now > * + * {
+  margin-top: var(--s3);
+}
+
+.sf-key__now .hf-tag {
+  white-space: normal;
+}
+
+.sf-key__rec {
+  padding-top: var(--s3);
+  background: linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 0 / 8px 2px repeat-x;
+}
+
+.sf-list > li + li {
+  margin-top: var(--s1);
+}
+
+.sf-figure {
+  font-size: 30px;
+  line-height: 34px;
+}
+
+/* ---------- the record of refusals ---------- */
+.sf-rec {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  column-gap: var(--s10);
+  row-gap: var(--s6);
+  align-items: center;
+}
+
+.sf-rec__plate,
+.sf-rec__pic {
+  height: 240px;
+}
+
+.sf-rec__by {
+  margin-top: var(--s4);
+  border-top: var(--rule-thin) solid var(--fg);
+}
+
+.sf-rec__by li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s4);
+  padding: var(--s2) 0;
+  background: linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 100% / 8px 2px repeat-x;
+}
+
+.sf-rec__by li > :first-child {
+  font-size: 20px;
+  line-height: 24px;
+  flex: none;
+}
+
+.sf-rec__by li > :last-child {
+  text-align: right;
+}
+
+.sf-rec__note {
+  margin-top: var(--s3);
+}
+
+.sf-probes {
+  margin-top: var(--s8);
+  scroll-margin-top: var(--s6);
+}
+
+.sf-slips {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s8);
+  margin-top: var(--s8);
+}
+
+.sf-slip {
+  display: flex;
+  flex-direction: column;
+  border: var(--rule) solid var(--fg);
+  min-width: 0;
+  scroll-margin-top: var(--s6);
+}
+
+.sf-slip__plate,
+.sf-slip__pic {
+  height: 136px;
+}
+
+.sf-slip__text {
+  flex: 1;
+  padding: var(--s4) var(--s5) var(--s5);
+  border-top: var(--rule) solid var(--fg);
+}
+
+.sf-slip__head {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s4);
+  font-size: 20px;
+  line-height: 24px;
+  padding-bottom: var(--s2);
+  border-bottom: var(--rule) solid var(--fg);
+  margin-bottom: var(--s3);
+}
+
+.sf-slip__head span:last-child {
+  white-space: nowrap;
+}
+
+.sf-slip__head .hf-swatch {
+  width: 16px;
+  height: 16px;
+  vertical-align: -1px;
+}
+
+.sf-slip__title {
+  font: var(--tx-l) var(--f-text);
+  font-weight: 400;
+}
+
+.sf-slip__tried {
+  font: var(--tx-m) var(--f-text);
+  font-style: italic;
+  margin-top: var(--s1);
+}
+
+.sf-slip__answer {
+  font-size: 30px;
+  line-height: 34px;
+  margin-top: var(--s3);
+  overflow-wrap: anywhere;
+}
+
+.sf-slip__answer--long {
+  font-size: 20px;
+  line-height: 24px;
+}
+
+.sf-slip__raw {
+  font: var(--tx-s) var(--f-text);
+  margin-top: var(--s2);
+  overflow-wrap: anywhere;
+}
+
+.sf-slip__how {
+  font: var(--tx-s) var(--f-text);
+  margin-top: var(--s3);
+}
+
+.sf-slip__proof {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s2) var(--s5);
+  margin-top: var(--s4);
+  padding-top: var(--s3);
+  background: linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 0 / 8px 2px repeat-x;
+}
+
+.sf-slip__when {
+  font: var(--tx-s) var(--f-text);
+  font-style: italic;
+}
+
+.sf-earlier {
+  margin-top: var(--s8);
+}
+
+.sf-earlier__list li {
+  padding: var(--s3) var(--s4);
+  background: linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 100% / 8px 2px repeat-x;
+}
+
+.sf-earlier__list li:last-child {
+  background: none;
+}
+
+.sf-earlier__list p:first-child {
+  font-size: 20px;
+  line-height: 24px;
+}
+
+/* ---------- the attester and the latest snapshot ---------- */
+.sf-evm {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: var(--s6);
+  align-items: start;
+}
+
+.sf-evm__body > * + * {
+  margin-top: var(--s4);
+}
+
+/* While the owner still has to name the attester, the call that does it stands beside the facts and the section is one column. */
+.sf-evm--act {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.sf-evm--act .sf-evm__attester {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  column-gap: var(--s10);
+  row-gap: var(--s5);
+  align-items: start;
+}
+
+.sf-evm__action {
+  margin-top: var(--s5);
+  padding-top: var(--s4);
+  border-top: var(--rule-thin) solid var(--fg);
+}
+
+.sf-evm--act .sf-evm__action {
+  margin-top: 0;
+  padding: 0 0 0 var(--s8);
+  border-top: 0;
+  border-left: var(--rule-thin) solid var(--fg);
+}
+
+.sf-snap {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s5);
+  padding-bottom: var(--s4);
+  border-bottom: var(--rule-thin) solid var(--fg);
+}
+
+.sf-snap .hf-stat__label {
+  align-items: flex-start;
+  min-height: 48px;
+}
+
+.sf-who {
+  font-style: italic;
+}
+
+.sf-evm__more {
+  padding-top: var(--s3);
+  background: linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 0 / 8px 2px repeat-x;
+}
+
+/* ---------- what the service does not hold ---------- */
+.sf-own {
+  display: grid;
+  grid-template-columns: 296px minmax(0, 1fr);
+  column-gap: var(--s10);
+  row-gap: var(--s5);
+  align-items: center;
+  padding-top: var(--s8);
+  border-top: var(--rule) solid var(--fg);
+}
+
+.sf-own__plate,
+.sf-own__pic {
+  height: 136px;
+}
+
+.sf-own__title {
+  font: var(--px-2) var(--f-px);
+  font-weight: 420;
+  margin-bottom: var(--s2);
+}
+
+.sf-own p {
+  max-width: 44em;
+}
+
+/* ---------- the owner's panels ---------- */
+.sf-act__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.sf-act__probe {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: var(--s4) var(--s4) var(--s5);
+  border-bottom: var(--rule-thin) solid var(--fg);
+}
+
+.sf-act__probe:nth-child(odd) {
+  border-right: var(--rule-thin) solid var(--fg);
+}
+
+.sf-act__probe:nth-last-child(-n + 2) {
+  border-bottom: 0;
+}
+
+.sf-act__name {
+  font: var(--px-1) var(--f-px);
+  font-weight: 500;
+}
+
+.sf-act__facts {
+  margin: var(--s3) 0 var(--s4);
+}
+
+.sf-act__go {
+  margin-top: auto;
+}
+
+.sf-act__result {
+  margin-top: var(--s4);
+}
+
+.sf-act__result > * + * {
+  margin-top: var(--s3);
+}
+
+.sf-act__said {
+  font: var(--tx-s) var(--f-text);
+  margin-top: var(--s2);
+}
+
+.sf-act__said + .sf-act__said {
+  margin-top: var(--s1);
+}
+
+.sf-wallets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s3);
+}
+
+.sf-steps > * + * {
+  margin-top: var(--s3);
+}
+
+/* ---------- narrower ---------- */
+@media (max-width: 1279px) {
+  .sf-ring {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .sf-key {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .sf-key__who {
+    grid-column: 1 / -1;
+  }
+
+  .sf-evm {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 1099px) {
+  .sf-evm--act .sf-evm__attester {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sf-evm--act .sf-evm__action {
+    padding: var(--s4) 0 0;
+    border-left: 0;
+    border-top: var(--rule-thin) solid var(--fg);
+  }
+}
+
+@media (max-width: 899px) {
+  .sf-rec,
+  .sf-slips,
+  .sf-act__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sf-act__probe:nth-child(odd) {
+    border-right: 0;
+  }
+
+  .sf-act__probe:nth-last-child(-n + 2) {
+    border-bottom: var(--rule-thin) solid var(--fg);
+  }
+
+  .sf-act__probe:last-child {
+    border-bottom: 0;
+  }
+
+  .sf-own {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sf-own__plate {
+    max-width: 296px;
+  }
+}
+
+@media (max-width: 760px) {
+  .sf-ring {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .sf-key {
+    grid-template-columns: minmax(0, 1fr);
+    padding: var(--s5) 0 var(--s6);
+  }
+
+  .sf-rec__plate,
+  .sf-rec__pic {
+    height: 168px;
+  }
+
+  .sf-snap {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sf-snap .hf-stat__label {
+    min-height: 0;
+  }
+
+  .sf-slip__answer {
+    font-size: 20px;
+    line-height: 24px;
+  }
+
+  .sf-slip__text {
+    padding: var(--s3) var(--s4) var(--s4);
+  }
+}
+
+@media (max-width: 480px) {
+  .sf-ring {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--s5);
+  }
+
+  /* One key to a row: the picture beside its name where the key fits whole, which needs 168px. */
+  .sf-ring__key {
+    display: grid;
+    grid-template-columns: 168px minmax(0, 1fr);
+    grid-template-areas:
+      'pic name'
+      'pic chain'
+      'pic bound';
+    column-gap: var(--s3);
+    align-content: start;
+  }
+
+  .sf-ring__plate {
+    grid-area: pic;
+    height: 96px;
+  }
+
+  .sf-ring__pic {
+    height: 96px;
+  }
+
+  .sf-ring__name {
+    grid-area: name;
+    justify-self: start;
+    margin-top: 0;
+  }
+
+  .sf-ring__chain {
+    grid-area: chain;
+  }
+
+  .sf-ring__bound {
+    grid-area: bound;
+  }
+}

@@ -1,0 +1,220 @@
+/* The Settings page. Everything else on it is a primitive. */
+
+/* ---------- the organisation ---------- */
+.st-org {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  column-gap: var(--s12);
+  row-gap: var(--s6);
+  align-items: start;
+}
+
+.st-org__name {
+  font-size: 40px;
+  line-height: 44px;
+  margin: 0 0 var(--s4) -2px;
+  overflow-wrap: anywhere;
+}
+
+.st-org__edit {
+  min-width: 0;
+  padding-left: var(--s8);
+  border-left: var(--rule-thin) solid var(--fg);
+}
+
+.st-who {
+  font: var(--tx-s) var(--f-text);
+  font-style: italic;
+}
+
+.st-form > * + * {
+  margin-top: var(--s5);
+}
+
+.st-form__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s3) var(--s5);
+}
+
+/* ---------- the accounts ---------- */
+.st-accounts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-top: var(--rule) solid var(--fg);
+  border-bottom: var(--rule) solid var(--fg);
+}
+
+.st-acct {
+  min-width: 0;
+  padding: var(--s5) var(--s6) var(--s6) 0;
+  border-bottom: var(--rule-thin) solid var(--fg);
+}
+
+.st-acct:nth-child(even) {
+  padding: var(--s5) 0 var(--s6) var(--s6);
+  border-left: var(--rule-thin) solid var(--fg);
+}
+
+.st-acct:nth-last-child(-n + 2) {
+  border-bottom: 0;
+}
+
+.st-acct__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--s1) var(--s4);
+  margin-bottom: var(--s3);
+}
+
+.st-acct__head h3 {
+  font-size: 30px;
+  line-height: 34px;
+  font-weight: 420;
+}
+
+.st-acct__body > * + * {
+  margin-top: var(--s3);
+}
+
+.st-acct__row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--s1) var(--s5);
+}
+
+/* ---------- the keys ---------- */
+.st-key {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 3fr) minmax(0, 4fr);
+  column-gap: var(--s8);
+  row-gap: var(--s2);
+  align-items: start;
+  padding: var(--s4);
+  border-bottom: var(--rule-thin) solid var(--fg);
+}
+
+.st-key:last-child {
+  border-bottom: 0;
+}
+
+.st-key__name {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s1) var(--s3);
+  font-size: 20px;
+  line-height: 24px;
+  font-weight: 500;
+  margin-bottom: var(--s1);
+}
+
+.st-key__when > * + * {
+  margin-top: var(--s1);
+}
+
+.st-keys__empty {
+  padding: var(--s4);
+  font-style: italic;
+}
+
+.st-more {
+  margin-top: var(--s4);
+}
+
+/* ---------- what is fixed ---------- */
+.st-fixed {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s6) var(--s10);
+}
+
+.st-fixed dt {
+  font-size: 20px;
+  line-height: 24px;
+  padding-bottom: var(--s2);
+  margin-bottom: var(--s2);
+  border-bottom: var(--rule-thin) solid var(--fg);
+}
+
+.st-fixed dd {
+  overflow-wrap: anywhere;
+}
+
+/* ---------- the session ---------- */
+.st-session {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  column-gap: var(--s12);
+  row-gap: var(--s5);
+  align-items: center;
+}
+
+.st-out {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s3) var(--s5);
+}
+
+.st-out .hf-notice {
+  flex-basis: 100%;
+}
+
+/* ---------- narrower ---------- */
+@media (max-width: 1099px) {
+  .st-org,
+  .st-session {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .st-org__edit {
+    padding: var(--s5) 0 0;
+    border-left: 0;
+    border-top: var(--rule-thin) solid var(--fg);
+  }
+
+  .st-key {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .st-key__what {
+    grid-column: 1 / -1;
+  }
+
+  .st-fixed {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 760px) {
+  .st-accounts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .st-acct,
+  .st-acct:nth-child(even) {
+    padding: var(--s4) 0 var(--s5);
+    border-left: 0;
+    border-bottom: var(--rule-thin) solid var(--fg);
+  }
+
+  .st-acct:last-child {
+    border-bottom: 0;
+  }
+
+  .st-org__name,
+  .st-acct__head h3 {
+    font-size: 30px;
+    line-height: 34px;
+  }
+
+  .st-key {
+    grid-template-columns: minmax(0, 1fr);
+    padding: var(--s3);
+  }
+}

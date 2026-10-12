@@ -1,0 +1,847 @@
+/*
+ * The books: the statement, the reconciliation and the ledger, as the
+ * workspace pages and the auditor's view both set them. Everything else is
+ * a primitive.
+ */
+
+/* ---------- the period ---------- */
+.bk-periods {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s2) var(--s4);
+}
+
+.bk-periods__label {
+  font-size: 20px;
+  line-height: 24px;
+}
+
+.bk-periods ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+}
+
+.bk-periods .hf-link--nav {
+  box-shadow: inset 0 0 0 2px var(--fg);
+}
+
+.bk-period {
+  font-size: 20px;
+  line-height: 24px;
+}
+
+/* A figure that cannot be given: the swatch of an unavailable thing and the words that say why. */
+.bk-none {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  font: var(--tx-s) var(--f-text);
+  font-style: italic;
+  white-space: nowrap;
+}
+
+.bk-none .hf-swatch {
+  width: 16px;
+  height: 16px;
+  vertical-align: 0;
+}
+
+/* ---------- what is held now ---------- */
+.bk-held {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 4fr) minmax(0, 3fr);
+  column-gap: var(--s10);
+  row-gap: var(--s6);
+  align-items: start;
+  padding-bottom: var(--s6);
+  border-bottom: var(--rule) solid var(--fg);
+}
+
+.bk-norunway {
+  font: var(--tx-s) var(--f-text);
+  margin-top: var(--s2);
+}
+
+/* ---------- the period's flows ---------- */
+.bk-flows {
+  width: 100%;
+  margin-top: var(--s5);
+}
+
+.bk-flows caption {
+  text-align: left;
+  font-size: 20px;
+  line-height: 24px;
+  font-weight: 500;
+  padding-bottom: var(--s2);
+}
+
+.bk-flows__period {
+  font-weight: 420;
+}
+
+.bk-flows thead th {
+  text-align: left;
+  font: var(--px-1) var(--f-px);
+  font-weight: 420;
+  padding: var(--s2) var(--s5) var(--s2) 0;
+  border-top: var(--rule-thin) solid var(--fg);
+  border-bottom: var(--rule-thin) solid var(--fg);
+}
+
+.bk-flows tbody th,
+.bk-flows tbody td {
+  padding: var(--s2) var(--s5) var(--s3) 0;
+  vertical-align: top;
+  background: linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 100% / 8px 2px repeat-x;
+}
+
+.bk-flows tbody tr:last-child > * {
+  background: none;
+  border-bottom: var(--rule-thin) solid var(--fg);
+}
+
+.bk-flows tbody th {
+  text-align: left;
+  font-weight: 400;
+}
+
+.bk-flows tr > :last-child {
+  padding-right: 0;
+}
+
+.bk-flows .bk-flows__num {
+  text-align: right;
+}
+
+.bk-flows__label {
+  display: block;
+}
+
+.bk-flows__note {
+  display: block;
+  font: var(--tx-s) var(--f-text);
+  font-style: italic;
+}
+
+.bk-assets {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.bk-on {
+  font: var(--tx-s) var(--f-text);
+  font-style: italic;
+}
+
+.bk-foot {
+  margin-top: var(--s3);
+  max-width: 62em;
+}
+
+/* ---------- since the lock ---------- */
+.bk-lock {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  column-gap: var(--s10);
+  row-gap: var(--s6);
+  margin-top: var(--s6);
+  padding-top: var(--s5);
+  border-top: var(--rule) solid var(--fg);
+}
+
+.bk-lock__title,
+.bk-drift__title {
+  font-size: 20px;
+  line-height: 24px;
+  font-weight: 500;
+  margin-bottom: var(--s2);
+}
+
+.bk-lock__facts > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--s1) var(--s4);
+  padding: var(--s2) 0;
+  background: linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 100% / 8px 2px repeat-x;
+}
+
+.bk-lock__facts > div:last-child {
+  background: none;
+}
+
+.bk-lock__facts dd {
+  text-align: right;
+}
+
+.bk-drift .hf-bars__row {
+  grid-template-columns: 92px minmax(0, 1fr) 128px;
+}
+
+.bk-drift .hf-small {
+  margin-top: var(--s3);
+}
+
+.bk-stale {
+  margin-top: var(--s5);
+}
+
+.bk-asof {
+  margin-top: var(--s5);
+}
+
+/* ---------- the reconciliation ---------- */
+.bk-check {
+  padding: var(--s4) var(--s4) var(--s5);
+  border-bottom: var(--rule-thin) solid var(--fg);
+}
+
+.bk-check__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--s1) var(--s4);
+}
+
+.bk-check__head h3 {
+  font-size: 20px;
+  line-height: 24px;
+  font-weight: 500;
+}
+
+.bk-check__what {
+  margin-top: var(--s1);
+  max-width: 54em;
+}
+
+.bk-check__found {
+  margin-top: var(--s2);
+  font: var(--tx-s) var(--f-text);
+}
+
+.bk-check__problems {
+  margin-top: var(--s3);
+}
+
+.bk-check__problems li {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: var(--s4);
+  align-items: baseline;
+  padding: var(--s2) 0;
+  background: linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 0 / 8px 2px repeat-x;
+  overflow-wrap: anywhere;
+}
+
+.bk-recon__foot {
+  padding: var(--s3) var(--s4);
+}
+
+.bk-recon__gap {
+  padding: var(--s4);
+}
+
+.bk-recon__gap > * + * {
+  margin-top: var(--s3);
+}
+
+/* ---------- the ledger ---------- */
+.bk-ledger__wrap {
+  padding: var(--s2) var(--s4) var(--s4);
+}
+
+.bk-ledger__empty {
+  font-style: italic;
+  padding: var(--s3) 0;
+}
+
+.bk-ledger {
+  width: 100%;
+  font: 18px/24px var(--f-text);
+}
+
+.bk-ledger thead th {
+  text-align: left;
+  font: var(--px-1) var(--f-px);
+  font-weight: 420;
+  white-space: nowrap;
+  padding: var(--s2) var(--s4) var(--s2) 0;
+  border-bottom: var(--rule) solid var(--fg);
+  vertical-align: bottom;
+}
+
+.bk-ledger tbody td,
+.bk-ledger tbody th {
+  padding: var(--s2) var(--s4) var(--s2) 0;
+  vertical-align: top;
+  text-align: left;
+  font-weight: 400;
+  background: linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 100% / 8px 2px repeat-x;
+}
+
+.bk-ledger tbody tr:last-child > * {
+  background: none;
+}
+
+.bk-ledger tr > :last-child {
+  padding-right: 0;
+}
+
+.bk-ledger .bk-ledger__num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.bk-ledger__when {
+  white-space: nowrap;
+}
+
+.bk-ledger__source {
+  font-size: 20px;
+  line-height: 24px;
+  white-space: nowrap;
+}
+
+.bk-ledger__what > span {
+  display: block;
+}
+
+.bk-ledger__detail {
+  font: var(--tx-s) var(--f-text);
+  font-style: italic;
+  overflow-wrap: anywhere;
+}
+
+.bk-ledger__ref {
+  overflow-wrap: anywhere;
+}
+
+/* A shortened transaction id stays on one line. */
+.bk-ledger__proof .hf-txlink__id {
+  overflow-wrap: normal;
+  white-space: nowrap;
+}
+
+.bk-ledger__noproof {
+  font: var(--tx-s) var(--f-text);
+  font-style: italic;
+}
+
+.bk-ledger__note {
+  padding: var(--s3) var(--s4);
+  border-top: var(--rule-thin) solid var(--fg);
+}
+
+/* ---------- verifying, exporting, sharing ---------- */
+.bk-own > * + * {
+  margin-top: var(--s6);
+}
+
+.bk-pub {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: var(--s6);
+  align-items: start;
+}
+
+.bk-pub__plate,
+.bk-pub__pic {
+  height: 216px;
+}
+
+.bk-pub__body > * + * {
+  margin-top: var(--s4);
+}
+
+.bk-command {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s3) var(--s4);
+  padding: var(--s3) var(--s4);
+  border: var(--rule-thin) solid var(--fg);
+}
+
+.bk-command .hf-copy {
+  flex: none;
+}
+
+.bk-verify__steps li {
+  padding: var(--s2) 0;
+  background: linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 100% / 8px 2px repeat-x;
+}
+
+.bk-verify__steps li:last-child {
+  background: none;
+}
+
+.bk-command code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font: var(--num-m) var(--f-num);
+}
+
+.bk-verify {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s6) var(--s10);
+}
+
+.bk-verify h4 {
+  font-size: 20px;
+  line-height: 24px;
+  font-weight: 500;
+  padding-bottom: var(--s2);
+  border-bottom: var(--rule-thin) solid var(--fg);
+}
+
+.bk-verify li {
+  padding: var(--s2) 0;
+  background: linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 100% / 8px 2px repeat-x;
+}
+
+.bk-verify .hf-small {
+  margin-top: var(--s3);
+}
+
+.bk-who {
+  font-style: italic;
+  max-width: 62em;
+}
+
+/* ---------- the owner's panels ---------- */
+.bk-act > * + * {
+  margin-top: var(--s4);
+}
+
+.bk-exports {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s6);
+}
+
+.bk-export {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s3);
+  min-width: 0;
+}
+
+.bk-export p {
+  flex: 1;
+}
+
+.bk-export__state {
+  width: 100%;
+}
+
+.bk-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s5) var(--s6);
+}
+
+.bk-form__wide {
+  grid-column: 1 / -1;
+}
+
+.bk-form fieldset {
+  border: 0;
+  min-width: 0;
+}
+
+.bk-form legend {
+  font: var(--px-1) var(--f-px);
+  font-weight: 420;
+  margin-bottom: var(--s2);
+}
+
+.bk-modules {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s3) var(--s6);
+}
+
+.bk-form__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s4) var(--s6);
+}
+
+.bk-token {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+.bk-token__url {
+  padding: var(--s3) var(--s4);
+  border: var(--rule-thin) solid var(--fg);
+  font: var(--num-m) var(--f-num);
+  overflow-wrap: anywhere;
+}
+
+.bk-link {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  column-gap: var(--s6);
+  row-gap: var(--s2);
+  align-items: start;
+  padding: var(--s3) var(--s4) var(--s4);
+  border-bottom: var(--rule-thin) solid var(--fg);
+}
+
+.bk-link:last-child {
+  border-bottom: 0;
+}
+
+.bk-link__name {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s1) var(--s4);
+  font-size: 20px;
+  line-height: 24px;
+  overflow-wrap: anywhere;
+}
+
+.bk-link__facts {
+  font: var(--tx-s) var(--f-text);
+  margin-top: var(--s1);
+}
+
+.bk-link__facts > * {
+  display: block;
+}
+
+.bk-link__empty {
+  padding: var(--s4);
+  font-style: italic;
+}
+
+/* ---------- the auditor's view ---------- */
+.au {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+/*
+ * Wide screens get the same layout drawn larger, as the workspace's shell
+ * does at the same widths. The frame's height is divided by the same factor,
+ * so that it still ends where the screen does.
+ */
+@media (min-width: 1800px) {
+  .au {
+    zoom: 1.25;
+    min-height: calc(100dvh / 1.25);
+  }
+}
+
+@media (min-width: 2160px) {
+  .au {
+    zoom: 1.5;
+    min-height: calc(100dvh / 1.5);
+  }
+}
+
+@media (min-width: 2520px) {
+  .au {
+    zoom: 1.75;
+    min-height: calc(100dvh / 1.75);
+  }
+}
+
+.au-head {
+  padding: var(--s6) var(--gutter) var(--s5);
+}
+
+.au-head__in,
+.au-page__in {
+  max-width: var(--page);
+  margin: 0 auto;
+}
+
+.au-head__in {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--s3) var(--s8);
+}
+
+.au-mark {
+  font: var(--px-3) var(--f-px);
+  font-weight: 420;
+  line-height: 40px;
+  color: var(--paper);
+  text-decoration: none;
+}
+
+.au-kind {
+  font: var(--tx-s) var(--f-text);
+  font-style: italic;
+}
+
+.au-who {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  font: var(--px-1) var(--f-px);
+  font-weight: 420;
+  line-height: 20px;
+  padding: var(--s2) var(--s3);
+  box-shadow: inset 0 0 0 2px var(--paper);
+}
+
+.au-who .hf-swatch {
+  width: 16px;
+  height: 16px;
+  vertical-align: 0;
+}
+
+.au-band > i {
+  display: block;
+  height: 8px;
+}
+
+.au-page {
+  flex: 1;
+  padding: var(--s10) var(--gutter) var(--s24);
+}
+
+.au-scope {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  column-gap: var(--s10);
+  row-gap: var(--s5);
+}
+
+.au-scope__modules li {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: var(--s4);
+  align-items: baseline;
+  padding: var(--s2) 0;
+  background: linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 100% / 8px 2px repeat-x;
+}
+
+.au-scope__modules li:last-child {
+  background: none;
+}
+
+.au-scope__modules .hf-tag {
+  min-width: 116px;
+}
+
+.au-gone {
+  max-width: 44em;
+}
+
+.au-gone > * + * {
+  margin-top: var(--s4);
+}
+
+.au-gone h1 {
+  font: var(--px-3) var(--f-px);
+  font-weight: 420;
+}
+
+/* ---------- narrower ---------- */
+@media (max-width: 1099px) {
+  .bk-held {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .bk-held > :first-child {
+    grid-column: 1 / -1;
+  }
+
+  .bk-lock,
+  .au-scope {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* The ledger as blocks: each entry names its own figures. */
+  .bk-ledger,
+  .bk-ledger tbody,
+  .bk-ledger tr,
+  .bk-ledger td,
+  .bk-ledger tbody th {
+    display: block;
+  }
+
+  .bk-ledger thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .bk-ledger tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) max-content;
+    column-gap: var(--s4);
+    padding: var(--s3) 0;
+    background: linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 100% / 8px 2px repeat-x;
+  }
+
+  .bk-ledger tbody tr:last-child {
+    background: none;
+  }
+
+  .bk-ledger tbody td,
+  .bk-ledger tbody th {
+    padding: 0;
+    background: none;
+  }
+
+  .bk-ledger__what,
+  .bk-ledger__proof {
+    grid-column: 1 / -1;
+  }
+
+  .bk-ledger__source {
+    text-align: right;
+  }
+
+  .bk-ledger .bk-ledger__num {
+    text-align: left;
+    white-space: normal;
+  }
+
+  .bk-ledger .bk-ledger__num + .bk-ledger__num {
+    text-align: right;
+  }
+
+  .bk-ledger__what {
+    margin: var(--s1) 0;
+  }
+
+  .bk-ledger__proof {
+    margin-top: var(--s1);
+  }
+}
+
+@media (max-width: 899px) {
+  .bk-pub,
+  .bk-verify,
+  .bk-exports,
+  .bk-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .bk-pub__plate {
+    max-width: 200px;
+  }
+
+  .bk-link {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 760px) {
+  .bk-held {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* The flows as blocks: the label, then each figure beside what it is. */
+  .bk-flows,
+  .bk-flows tbody,
+  .bk-flows tr,
+  .bk-flows td,
+  .bk-flows tbody th {
+    display: block;
+  }
+
+  .bk-flows caption {
+    display: block;
+  }
+
+  .bk-flows thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .bk-flows tbody tr {
+    padding: var(--s2) 0 var(--s3);
+    background: linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 100% / 8px 2px repeat-x;
+  }
+
+  .bk-flows tbody tr:first-child {
+    border-top: var(--rule-thin) solid var(--fg);
+  }
+
+  .bk-flows tbody tr:last-child {
+    background: none;
+    border-bottom: var(--rule-thin) solid var(--fg);
+  }
+
+  .bk-flows tbody th,
+  .bk-flows tbody td,
+  .bk-flows tbody tr:last-child > * {
+    padding: 0;
+    background: none;
+    border: 0;
+  }
+
+  .bk-flows tbody td {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--s4);
+    margin-top: var(--s1);
+  }
+
+  .bk-flows tbody td::before {
+    content: attr(data-label);
+    font: var(--tx-s) var(--f-text);
+    font-style: italic;
+  }
+
+  .bk-flows tbody td[data-empty] {
+    display: none;
+  }
+
+  .bk-none {
+    white-space: normal;
+  }
+
+  .bk-modules {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .bk-command {
+    flex-direction: column;
+  }
+
+  .bk-check__problems li {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* A value that takes a line of its own reads from the left, under its name. */
+  .bk-lock__facts > div {
+    display: block;
+  }
+
+  .bk-lock__facts dd {
+    text-align: left;
+  }
+
+  .au-page {
+    padding-top: var(--s6);
+  }
+}
