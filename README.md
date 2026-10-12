@@ -206,7 +206,7 @@ Derive a statement again. `holdfast verify` takes a statement export and repeats
 pnpm --filter @holdfast/cli holdfast verify "$PWD/demo/statement.json" --ufvk-file "$PWD/demo/treasury.ufvk"
 ```
 
-Relative paths are read from `apps/cli`, so give absolute ones. [`demo/statement.json`](demo/statement.json) is the demo organisation's export as of 12 October 2026, 18:06 UTC: 130 journal entries, one fill and 46 funding payments on Hyperliquid, the swap and the two payout runs. An export is the file the owner of an organisation downloads from `GET /api/orgs/<id>/books/export`; `apps/web/scripts/export-statement.ts` writes the same file from the command line. On that file the tool answers `VERIFIED: all 5 steps passed`.
+Relative paths are read from `apps/cli`, so give absolute ones. [`demo/statement.json`](demo/statement.json) is the demo organisation's export as of 12 October 2026, 21:44 UTC: 348 journal entries, one fill and 49 funding payments on Hyperliquid, the swap that funded the margin and four payout runs. An export is the file the owner of an organisation downloads from `GET /api/orgs/<id>/books/export`; `apps/web/scripts/export-statement.ts` writes the same file from the command line. On that file the tool answers `VERIFIED: all 5 steps passed`.
 
 The tool runs five steps: the journal chain, Zcash (a scan with the viewing key), Hyperliquid (the account's fills and funding), reconciliation, and arithmetic. It exits 0 only when every step ran and passed. With `--offline` or without a key the two chain steps are not run and the verdict is `NOT VERIFIED`. It verifies mainnet statements only.
 
