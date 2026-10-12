@@ -240,7 +240,22 @@ function scopeOf(key: KeyScope, facts: SafetyFacts): ScopeView {
         ? { status: 'ok', source, at, state: 'locked', headline: 'Named by the account', lines: [{ label: 'On HedgeAttestor', text: 'The team’s account has named this key as its attester. It can record snapshots for that account and for no other.' }], warnings: [] }
         : { status: 'ok', source, at, state: 'unlocked', headline: 'Not named', lines: [{ label: 'On HedgeAttestor', text: 'The team’s account has not named this key. Until it does, the contract accepts no snapshot from it.' }], warnings: [] };
     case 'hl_agent':
-      return unread('the agent key');
+      if (!isRecord(value) || typeof value.approved !== 'boolean') return unread('the agent key');
+      if (!value.approved) {
+        return { status: 'ok', source, at, state: 'unlocked', headline: 'Not approved', lines: [{ label: 'On the account', text: 'The account has not approved this key. Until it does, the venue accepts no order the key signs.' }], warnings: [] };
+      }
+      return {
+        status: 'ok',
+        source,
+        at,
+        state: 'limit',
+        headline: 'Approved to trade',
+        lines: [
+          { label: 'On the account', text: 'The venue lists this key among the agents of the account. It signs orders for that account; a withdrawal or transfer it signs is applied to its own empty address.' },
+          typeof value.validUntil === 'number' ? { label: 'Approval lapses', time: value.validUntil } : { label: 'Approval lapses', text: 'The venue names no expiry.' },
+        ],
+        warnings: [],
+      };
   }
 }
 
