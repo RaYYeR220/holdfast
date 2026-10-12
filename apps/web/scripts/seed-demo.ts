@@ -55,6 +55,16 @@
  *         "treasuryZat": "5000000",        the balance its treasury commitment hides, in zatoshi
  *         "salt": "0x…"                    and the 32-byte salt that hides it
  *       }
+ *     ],
+ *     "swaps": [                           swaps of ZEC into dollars on the organisation's own accounts that have completed
+ *       {
+ *         "purpose": "margin",             or "payout_float": what `funding/quotes` takes
+ *         "depositAddress": "t1…",         the one-time address the swap service gave for the deposit
+ *         "amountInZat": "930000",         what was paid to it, in zatoshi
+ *         "originTx": "2b38…",             the treasury's transaction that paid it, as explorers write a Zcash transaction id
+ *         "amountOut": "1102097700",       optional: what was delivered, in base units of the destination asset
+ *         "destinationTx": "0x…"           optional: the transaction that delivered it
+ *       }
  *     ]
  *   }
  *
@@ -67,6 +77,29 @@
  * holds that snapshot with this journal root and count, the balance and salt
  * open its treasury commitment, and the named transaction recorded it.
  * Attestations need HEDGE_ATTESTOR_ADDRESS set and the network to be mainnet.
+ *
+ * A swap is recorded only if the swap service, asked about the deposit
+ * address, reports that it succeeded, took in exactly `amountInZat` of ZEC,
+ * and delivered the asset of its purpose to the organisation's own account
+ * for that purpose: its Hyperliquid account for margin, its Solana wallet for
+ * payout float. `amountOut` and `destinationTx`, when given, have to be what
+ * the service reports. What goes on record is the service's answer and not
+ * the file's: what was delivered and in which transaction, the assets, and
+ * when the swap was quoted and settled.
+ *
+ * `originTx` is confirmed in one of two ways, and the report line says which.
+ * Where the swap service names the swap's origin transaction, it has to be
+ * that one. Where the service names none at all, the treasury's own scanned
+ * history has to hold a transparent payment of exactly `amountInZat` in
+ * `originTx`, made while the swap lasted and not already the deposit of
+ * another swap on record; for that a tick has to have scanned the treasury
+ * past the payment first. A viewing key shows that such a
+ * payment left the treasury and how much it was, not where it went: that it
+ * went to the deposit address is the swap service's word, which reports a
+ * deposit of that amount there. The swap's row holds the origin transactions
+ * the service names, which may be none, exactly as for a swap made through
+ * the application.
+ *
  * Whatever cannot be confirmed is left out and reported, and the exit code is
  * 1. Running the script again records nothing a second time.
  */

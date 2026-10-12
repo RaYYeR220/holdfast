@@ -27,6 +27,7 @@ import {
   type PayoutStatus,
   type RefusalRow,
   type ServiceKey,
+  type SettledSwap,
   type SwapRow,
   type SwapSighting,
   type TreasuryOpening,
@@ -518,6 +519,47 @@ export class PgStore implements Store {
       throw new Error(`deposit address ${swap.depositAddress} already belongs to another swap`);
     }
     return existing;
+  }
+
+  /**
+   * Record a swap that had settled before the database knew of it, under the
+   * times it was quoted and settled at: the books tie a treasury payment to a
+   * swap only when it was made while the swap lasted. Its deposit address
+   * identifies it. Returns false, and writes nothing, when the organisation
+   * already has a swap with that address.
+   */
+  async importSettledSwap(orgId: string, swap: SettledSwap): Promise<boolean> {
+    if (!SETTLED_SWAP_STATES.includes(swap.state)) throw new RangeError(`a swap that is "${swap.state}" has not settled and is not recorded as one that has`);
+    if (!Number.isSafeInteger(swap.createdAt) || !Number.isSafeInteger(swap.updatedAt) || swap.createdAt <= 0 || swap.updatedAt < swap.createdAt) {
+      throw new RangeError('a settled swap was quoted at one moment and settled at the same or a later one');
+    }
+    const created = await this.db
+      .insert(swaps)
+      .values({
+        orgId,
+        purpose: swap.purpose,
+        originAsset: swap.originAsset,
+        destinationAsset: swap.destinationAsset,
+        amountIn: swap.amountIn,
+        minAmountOut: swap.minAmountOut,
+        amountOut: swap.amountOut,
+        depositAddress: swap.depositAddress,
+        recipient: swap.recipient,
+        quote: swap.quote,
+        state: swap.state,
+        originTxs: swap.originTxs,
+        destinationTxs: swap.destinationTxs,
+        createdAt: swap.createdAt,
+        updatedAt: swap.updatedAt,
+      })
+      .onConflictDoNothing({ target: swaps.depositAddress })
+      .returning({ id: swaps.id });
+    if (created.length > 0) return true;
+    const [existing] = await this.db.select({ orgId: swaps.orgId }).from(swaps).where(eq(swaps.depositAddress, swap.depositAddress));
+    if (existing === undefined || existing.orgId !== orgId) {
+      throw new Error(`deposit address ${swap.depositAddress} already belongs to another swap`);
+    }
+    return false;
   }
 
   async findSwap(orgId: string, swapId: string): Promise<SwapRow | null> {

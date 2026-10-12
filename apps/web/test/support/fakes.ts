@@ -132,7 +132,7 @@ export class FakeOneClick {
   readonly quotes: QuoteBody[] = [];
   readonly statusCalls: string[] = [];
   /** What `/v0/status` answers, by deposit address. An address that is not here is unknown to the service. */
-  readonly swaps = new Map<string, { status: string; swapDetails?: Record<string, unknown>; updatedAt?: string }>();
+  readonly swaps = new Map<string, { status: string; swapDetails?: Record<string, unknown>; updatedAt?: string; quoteResponse?: Record<string, unknown> }>();
   /** The deposit address of the latest quote that got one. */
   lastDeposit: string | null = null;
 

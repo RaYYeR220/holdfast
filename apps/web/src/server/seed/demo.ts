@@ -1,6 +1,8 @@
 import { commitTreasury } from '@holdfast/attest';
+import { BLOCK_CLOCK_ALLOWANCE_MS, matchSwapFunding } from '@holdfast/books';
 import { DEFAULT_POLICY } from '@holdfast/core';
-import { type NewAttestation, type NewServiceKey, type PaidPayoutRun, runNumberOf } from '@holdfast/db';
+import { type NewAttestation, type NewServiceKey, type OrgRecord, type PaidPayoutRun, type SettledSwap, runNumberOf } from '@holdfast/db';
+import { ASSETS, type SwapStatus } from '@holdfast/intents';
 import { decodeRevertReason, lineMemo, lineOfMemo } from '@holdfast/tempo';
 import { redactViewingKeys } from '@holdfast/zcash';
 import { type Hex, getAddress, isAddress } from 'viem';
@@ -9,15 +11,18 @@ import { z } from 'zod';
 import { attesterKeyOf } from '../attestations/service';
 import { looksLikeSolanaAddress } from '../config';
 import type { Deps } from '../deps';
+import { ApiError } from '../errors';
+import { fundingDestination } from '../funding/service';
 import { messageOf } from '../redact';
 
 /**
  * Registers what an organisation has already done on its chains: who it is,
  * the service keys it uses, the payout runs it has paid, the refusals it has
- * provoked and the snapshots of its hedge it has had attested. Nothing is
- * taken on the file's word where a chain can be asked: a run, a refusal or an
- * attestation is recorded only once its chain shows it. Running it again
- * records nothing twice.
+ * provoked, the snapshots of its hedge it has had attested and the swaps that
+ * funded its own accounts. Nothing is taken on the file's word where a chain
+ * or the swap service can be asked: a run, a refusal, an attestation or a
+ * swap is recorded only once that shows it. Running it again records nothing
+ * twice.
  */
 
 const hexKey = z.string().regex(/^0x[0-9a-fA-F]{64}$/);
@@ -43,6 +48,11 @@ const zatoshi = z
   .string()
   .regex(/^(0|[1-9]\d{0,18})$/)
   .transform((digits) => BigInt(digits));
+/** A Zcash transaction id: thirty-two bytes as hex, as explorers write it. */
+const zcashTx = z
+  .string()
+  .regex(/^[0-9a-fA-F]{64}$/)
+  .transform((text) => text.toLowerCase());
 
 const seedSchema = z.strictObject({
   org: z.strictObject({
@@ -88,6 +98,21 @@ const seedSchema = z.strictObject({
   refusals: z.array(z.strictObject({ chain: z.enum(['tempo', 'solana']), kind: z.string().min(1).max(64), tx: z.string().min(1).max(128), attempted: z.string().min(1).max(500) })).default([]),
   /** Snapshots the HedgeAttestor contract already holds for the organisation, with what opens each treasury commitment. */
   attestations: z.array(z.strictObject({ series: counter, number: counter, tx: bytes32, journalCount: counter, root: bytes32, treasuryZat: zatoshi, salt: bytes32 })).default([]),
+  /** Swaps of ZEC into dollars on one of the organisation's own accounts that completed before the database knew of them. */
+  swaps: z
+    .array(
+      z.strictObject({
+        purpose: z.enum(['margin', 'payout_float']),
+        depositAddress: z.string().min(1).max(128),
+        amountInZat: amount,
+        /** The treasury's payment to the deposit address. */
+        originTx: zcashTx,
+        /** What the file expects was delivered, in base units of the destination asset, and in which transaction. Each is held against the swap service's answer when given. */
+        amountOut: amount.optional(),
+        destinationTx: z.string().min(1).max(128).optional(),
+      }),
+    )
+    .default([]),
 });
 
 export type DemoSeed = z.infer<typeof seedSchema>;
@@ -120,7 +145,7 @@ export interface SeedReport {
   complete: boolean;
 }
 
-type SeedDeps = Pick<Deps, 'store' | 'zcash' | 'tempo' | 'solana' | 'attestor' | 'redact'>;
+type SeedDeps = Pick<Deps, 'store' | 'zcash' | 'tempo' | 'solana' | 'attestor' | 'oneClick' | 'redact'>;
 
 const sameHex = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 
@@ -245,6 +270,116 @@ async function confirmedAttestation(deps: SeedDeps, seed: DemoSeed, attestation:
   };
 }
 
+type SeedSwap = DemoSeed['swaps'][number];
+
+const SWAP_SERVICE = 'the swap service';
+const instant = (ms: number) => new Date(ms).toISOString();
+
+/**
+ * Whether the treasury's own scanned history holds the payment the file
+ * names as a swap's deposit: a transparent payment of exactly the swap's
+ * input, in that transaction, made while the swap lasted. A block's time may
+ * be off by as much as the books allow for when they tie a payment to a
+ * swap. Returns what is wrong, or null when the payment is there.
+ */
+async function depositProblem(deps: SeedDeps, org: OrgRecord, swap: SeedSwap, lasted: { from: number; to: number }): Promise<string | null> {
+  const outgoing = await deps.store.outgoing(org.id);
+  const inTx = outgoing.filter((payment) => sameHex(payment.txid, swap.originTx));
+  if (inTx.length === 0) {
+    const reached = org.scannedTo === null ? 'the treasury has not been scanned yet' : `the treasury is scanned to block ${org.scannedTo}`;
+    return `${SWAP_SERVICE} names no origin transaction for it, and the treasury's scanned history holds no payment in ${swap.originTx}: ${reached}, and a tick has to scan past that transaction first`;
+  }
+  const deposit = inTx.find((payment) => payment.pool === 'transparent' && payment.zat === swap.amountInZat);
+  if (deposit === undefined) return `the treasury's scanned history holds no transparent payment of ${swap.amountInZat} zat in ${swap.originTx}`;
+  if (deposit.time < lasted.from - BLOCK_CLOCK_ALLOWANCE_MS || deposit.time > lasted.to + BLOCK_CLOCK_ALLOWANCE_MS) {
+    return `the payment in ${swap.originTx} was made at ${instant(deposit.time)}, not while the swap lasted, from ${instant(lasted.from)} to ${instant(lasted.to)}`;
+  }
+  // A payment pays for one swap at most. The books have given this one away if a swap on record already takes it.
+  const paidInZec = (await deps.store.listSwaps(org.id)).filter((known) => known.originAsset === ASSETS.ZEC);
+  if ([...matchSwapFunding(paidInZec, outgoing).values()].includes(deposit.id)) return `the payment in ${swap.originTx} already funds another swap on record`;
+  return null;
+}
+
+/**
+ * Ask the swap service where the swap at a deposit address stands and, if it
+ * completed as the file describes it, give it back ready to record, with how
+ * its origin transaction was confirmed. It has to have succeeded, taken in
+ * exactly the amount the file names, in ZEC, and delivered the asset of its
+ * purpose to the organisation's own account for that purpose. Its origin
+ * transaction has to be the one the swap service names; where the service
+ * names none at all, the treasury's own history has to hold the payment.
+ * What is recorded is the swap service's answer, not the file's: what was
+ * delivered and in which transaction, the assets, and when the swap was
+ * quoted and settled.
+ */
+async function confirmedSwap(deps: SeedDeps, org: OrgRecord, swap: SeedSwap): Promise<{ settled: SettledSwap; origin: string } | string> {
+  let wanted: ReturnType<typeof fundingDestination>;
+  try {
+    wanted = fundingDestination(deps, org, swap.purpose);
+  } catch (error) {
+    // The organisation has no account for the purpose, or this deployment does not fund it.
+    if (error instanceof ApiError) return error.message;
+    throw error;
+  }
+  // Hyperliquid writes accounts and transactions in hex, where case says nothing; a Solana address or signature is its exact text.
+  const sameThere = (a: string, b: string) => (swap.purpose === 'margin' ? sameHex(a, b) : a === b);
+
+  let status: SwapStatus;
+  try {
+    status = await deps.oneClick.status(swap.depositAddress);
+  } catch (error) {
+    return `it could not be confirmed with ${SWAP_SERVICE}: ${messageOf(error)}`;
+  }
+  if (status.state !== 'SUCCESS') return `${SWAP_SERVICE} reports it as ${status.state}, not as completed`;
+  const { quoted } = status;
+  if (quoted === null) return `${SWAP_SERVICE} does not repeat the quote the swap was made on, so what it was for cannot be checked`;
+  if (quoted.depositAddress !== swap.depositAddress) return `${SWAP_SERVICE} answered about another deposit address`;
+  if (quoted.originAsset !== ASSETS.ZEC) return `it was paid in ${quoted.originAsset}, not in ZEC`;
+  if (quoted.destinationAsset !== wanted.asset) return `it delivered ${quoted.destinationAsset}, and ${swap.purpose} is funded in ${wanted.asset}`;
+  if (!sameThere(quoted.recipient, wanted.recipient)) return `its recipient is ${quoted.recipient}, not the organisation's own account ${wanted.recipient}`;
+  if (status.amountIn === null) return `${SWAP_SERVICE} does not say how much it took in`;
+  if (status.amountIn !== swap.amountInZat || quoted.amountIn !== swap.amountInZat) return `it took in ${status.amountIn} zat, the file names ${swap.amountInZat}`;
+  if (status.amountOut === null || status.destinationTxs.length === 0) return `${SWAP_SERVICE} does not say what it delivered, or in which transaction`;
+  if (status.updatedAt === null) return `${SWAP_SERVICE} does not say when it settled`;
+  if (status.updatedAt < quoted.quotedAt) return `${SWAP_SERVICE} has it settled at ${instant(status.updatedAt)}, before it was quoted at ${instant(quoted.quotedAt)}`;
+  if (swap.amountOut !== undefined && swap.amountOut !== status.amountOut) return `it delivered ${status.amountOut}, the file expects ${swap.amountOut}`;
+  const { destinationTx } = swap;
+  if (destinationTx !== undefined && !status.destinationTxs.some((tx) => sameThere(tx, destinationTx))) {
+    return `it delivered in ${status.destinationTxs.join(', ')}, not in the transaction the file names`;
+  }
+
+  let origin: string;
+  if (status.originTxs.length > 0) {
+    // The swap service says which payment it took: that one, or the file is about another swap.
+    if (!status.originTxs.some((tx) => sameHex(tx, swap.originTx))) return `${SWAP_SERVICE} names ${status.originTxs.join(', ')} as its origin transaction, not the one the file names`;
+    origin = `${SWAP_SERVICE} names its origin transaction`;
+  } else {
+    const problem = await depositProblem(deps, org, swap, { from: quoted.quotedAt, to: status.updatedAt });
+    if (problem !== null) return problem;
+    origin = `${SWAP_SERVICE} names no origin transaction, and the treasury's own history holds the payment`;
+  }
+
+  const settled: SettledSwap = {
+    purpose: swap.purpose,
+    originAsset: quoted.originAsset,
+    destinationAsset: quoted.destinationAsset,
+    amountIn: status.amountIn,
+    minAmountOut: quoted.minAmountOut,
+    amountOut: status.amountOut,
+    depositAddress: swap.depositAddress,
+    // As the application writes it for a swap it quotes itself.
+    recipient: wanted.recipient,
+    quote: quoted,
+    state: status.state,
+    // Whatever the file says of it, the row holds what the swap service names.
+    originTxs: status.originTxs,
+    destinationTxs: status.destinationTxs,
+    createdAt: quoted.quotedAt,
+    updatedAt: status.updatedAt,
+  };
+  return { settled, origin };
+}
+
 export async function seedDemo(deps: SeedDeps, seed: DemoSeed): Promise<SeedReport> {
   const { org } = seed;
   const ufvk = org.ufvk.trim();
@@ -329,6 +464,32 @@ export async function seedDemo(deps: SeedDeps, seed: DemoSeed): Promise<SeedRepo
       items.push({ what, result: row === null ? 'kept' : 'recorded', detail: row === null ? 'already on record' : `${confirmed.journalCount} journal entries attested in ${attestation.tx}` });
     } catch (error) {
       items.push({ what, result: 'skipped', detail: `it could not be confirmed on chain: ${safe(messageOf(error))}` });
+    }
+  }
+
+  if (seed.swaps.length > 0) {
+    // The organisation as it now stands: its accounts are where a swap has to have delivered, and its scan says how far its history reaches.
+    const registered = await deps.store.findOrg(org.id);
+    for (const swap of seed.swaps) {
+      const what = `swap at ${swap.depositAddress}`;
+      try {
+        if (registered === null) throw new Error(`organisation ${org.id} is not in the database`);
+        if ((await deps.store.listSwaps(org.id)).some((known) => known.depositAddress === swap.depositAddress)) {
+          items.push({ what, result: 'kept', detail: 'already on record' });
+          continue;
+        }
+        const confirmed = await confirmedSwap(deps, registered, swap);
+        if (typeof confirmed === 'string') {
+          items.push({ what, result: 'skipped', detail: safe(confirmed) });
+          continue;
+        }
+        const { settled, origin } = confirmed;
+        const recorded = await deps.store.importSettledSwap(org.id, settled);
+        const delivered = `${settled.amountIn} zat in, ${settled.amountOut} out in ${settled.destinationTxs.join(', ')}`;
+        items.push({ what, result: recorded ? 'recorded' : 'kept', detail: recorded ? `${delivered}; ${origin}` : 'already on record' });
+      } catch (error) {
+        items.push({ what, result: 'skipped', detail: `it could not be recorded: ${safe(messageOf(error))}` });
+      }
     }
   }
 

@@ -364,6 +364,65 @@ describe('swaps', () => {
     const open = (await store.unsettledSwaps(1_000)).filter((s) => s.orgId === org).map((s) => s.id);
     expect(open).toEqual([second.id, first.id]);
   });
+
+  it('are recorded as settled, under the times they ran at, when they ran before the database knew of them', async () => {
+    const { store, org, clock, addOrg } = await setup();
+    const quotedAt = clock.ms - 2 * 86_400_000;
+    const settledAt = quotedAt + 7 * 60_000;
+    const past = { ...swap(), state: 'SUCCESS', amountOut: 3_040_000_000n, originTxs: ['zec-tx'], destinationTxs: ['hl-tx'], createdAt: quotedAt, updatedAt: settledAt };
+    expect(await store.importSettledSwap(org, past)).toBe(true);
+
+    const [row] = await store.listSwaps(org);
+    expect(row).toEqual({
+      id: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      orgId: org,
+      purpose: 'margin',
+      originAsset: past.originAsset,
+      destinationAsset: past.destinationAsset,
+      amountIn: 250_000_000n,
+      minAmountOut: 3_000_000_000n,
+      amountOut: 3_040_000_000n,
+      depositAddress: past.depositAddress,
+      recipient: '0xabc',
+      state: 'SUCCESS',
+      originTxs: ['zec-tx'],
+      destinationTxs: ['hl-tx'],
+      // Not the moment it was written down: the moments it was quoted and settled.
+      createdAt: quotedAt,
+      updatedAt: settledAt,
+    });
+    const [kept] = await rowsOf<{ quote: unknown }>('select quote from holdfast.swaps where id = $1', [row?.id]);
+    expect(kept?.quote).toEqual({ amountOut: { $bigint: '3050000000' }, signature: 'ed25519:sig' });
+
+    // It is over: nothing the swap service says later changes it, and it is not among the swaps to ask about.
+    expect(await store.updateSwap(org, row?.id ?? '', { state: 'PROCESSING', originTxs: [], destinationTxs: [], amountOut: null })).toEqual(row);
+    expect((await store.unsettledSwaps(1_000)).some((s) => s.id === row?.id)).toBe(false);
+
+    // A second time, with whatever else is claimed for the same deposit address, nothing is written.
+    expect(await store.importSettledSwap(org, { ...past, amountOut: 1n, destinationTxs: ['another'] })).toBe(false);
+    expect(await store.listSwaps(org)).toEqual([row]);
+    // A swap the application is still following is not overwritten by one said to have settled.
+    const open = await store.recordSwap(org, swap());
+    expect(await store.importSettledSwap(org, { ...past, depositAddress: open.depositAddress })).toBe(false);
+    expect(await store.findSwap(org, open.id)).toEqual(open);
+    // And a deposit address belongs to one organisation.
+    await expect(store.importSettledSwap(await addOrg(), past)).rejects.toThrow('already belongs to another swap');
+  });
+
+  it('are not recorded as settled when they have not settled, or under times that cannot be', async () => {
+    const { store, org, clock } = await setup();
+    const past = { ...swap(), state: 'SUCCESS', amountOut: 1n, originTxs: [], destinationTxs: ['hl-tx'], createdAt: clock.ms - 60_000, updatedAt: clock.ms };
+    for (const state of ['PENDING_DEPOSIT', 'PROCESSING', 'INCOMPLETE_DEPOSIT', 'UNKNOWN', '']) {
+      await expect(store.importSettledSwap(org, { ...past, state }), state).rejects.toThrow('has not settled');
+    }
+    for (const times of [{ updatedAt: past.createdAt - 1 }, { createdAt: 0 }, { createdAt: Number.NaN }, { updatedAt: 1.5 }]) {
+      await expect(store.importSettledSwap(org, { ...past, ...times }), JSON.stringify(times)).rejects.toThrow('quoted at one moment and settled at the same or a later one');
+    }
+    await expect(store.importSettledSwap('nobody', past)).rejects.toThrow();
+    expect(await store.listSwaps(org)).toEqual([]);
+    // A swap that ended without delivering is settled too.
+    expect(await store.importSettledSwap(org, { ...past, state: 'REFUNDED', amountOut: null, destinationTxs: [] })).toBe(true);
+  });
 });
 
 describe('run ids', () => {

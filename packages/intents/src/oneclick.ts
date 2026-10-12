@@ -56,6 +56,30 @@ export interface Quote {
 
 export type SwapState = 'PENDING_DEPOSIT' | 'PROCESSING' | 'SUCCESS' | 'INCOMPLETE_DEPOSIT' | 'REFUNDED' | 'FAILED' | 'UNKNOWN';
 
+/**
+ * The quote a swap was made on, as the service repeats it when it is asked
+ * where the swap stands: what was asked for, and what was promised.
+ */
+export interface QuotedSwap {
+  originAsset: string;
+  destinationAsset: string;
+  /** Where the destination asset is delivered. */
+  recipient: string;
+  /** Where the origin asset returns if the swap cannot complete; null when the service names no address. */
+  refundTo: string | null;
+  depositAddress: string;
+  amountIn: bigint;
+  amountOut: bigint;
+  /** The least the recipient can receive after slippage. */
+  minAmountOut: bigint;
+  /** When the quote was made, ms. */
+  quotedAt: number;
+  /** After this moment a deposit is refunded instead of swapped; null when the service states none. */
+  deadline: number | null;
+  /** The service's signature over the quote. */
+  signature: string;
+}
+
 export interface SwapStatus {
   state: SwapState;
   /** True once the swap can no longer change state. */
@@ -65,6 +89,8 @@ export interface SwapStatus {
   originTxs: string[];
   destinationTxs: string[];
   updatedAt: number | null;
+  /** Null when the answer repeats no quote, or one that cannot be read in full. */
+  quoted: QuotedSwap | null;
 }
 
 export class OneClickError extends Error {
@@ -106,6 +132,46 @@ function optionalBigInt(v: unknown): bigint | null {
 function txHashes(v: unknown): string[] {
   if (!Array.isArray(v)) return [];
   return v.flatMap((t) => (typeof t?.hash === 'string' ? [t.hash] : []));
+}
+
+const record = (v: unknown): Record<string, unknown> | null => (typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
+const text = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? v : null);
+const moment = (v: unknown): number | null => (typeof v === 'string' && !Number.isNaN(Date.parse(v)) ? Date.parse(v) : null);
+
+/**
+ * The quote inside a status answer. Every part that says what the swap was
+ * has to be there, or none of it is taken: half a quote would say less than
+ * it seems to.
+ */
+function quotedSwap(v: unknown): QuotedSwap | null {
+  const response = record(v);
+  const request = record(response?.quoteRequest);
+  const quote = record(response?.quote);
+  if (response === null || request === null || quote === null) return null;
+
+  const originAsset = text(request.originAsset);
+  const destinationAsset = text(request.destinationAsset);
+  const recipient = text(request.recipient);
+  const depositAddress = text(quote.depositAddress);
+  const amountIn = optionalBigInt(quote.amountIn);
+  const amountOut = optionalBigInt(quote.amountOut);
+  const minAmountOut = optionalBigInt(quote.minAmountOut);
+  const quotedAt = moment(response.timestamp);
+  if (originAsset === null || destinationAsset === null || recipient === null || depositAddress === null) return null;
+  if (amountIn === null || amountOut === null || minAmountOut === null || quotedAt === null) return null;
+  return {
+    originAsset,
+    destinationAsset,
+    recipient,
+    refundTo: text(request.refundTo),
+    depositAddress,
+    amountIn,
+    amountOut,
+    minAmountOut,
+    quotedAt,
+    deadline: moment(quote.deadline),
+    signature: text(response.signature) ?? '',
+  };
 }
 
 export function createOneClick(config: OneClickConfig = {}) {
@@ -191,7 +257,7 @@ export function createOneClick(config: OneClickConfig = {}) {
 
     async status(depositAddress: string): Promise<SwapStatus> {
       const { status, body } = await call(`/v0/status?depositAddress=${encodeURIComponent(depositAddress)}`, { method: 'GET' });
-      const b = body as { status?: unknown; updatedAt?: unknown; swapDetails?: Record<string, unknown>; message?: unknown };
+      const b = body as { status?: unknown; updatedAt?: unknown; swapDetails?: Record<string, unknown>; quoteResponse?: unknown; message?: unknown };
       if (status === 404) {
         throw new OneClickError(typeof b?.message === 'string' ? b.message : 'unknown deposit address', 404);
       }
@@ -208,6 +274,7 @@ export function createOneClick(config: OneClickConfig = {}) {
         originTxs: txHashes(d.originChainTxHashes),
         destinationTxs: txHashes(d.destinationChainTxHashes),
         updatedAt: Number.isNaN(updatedAt) ? null : updatedAt,
+        quoted: quotedSwap(b.quoteResponse),
       };
     },
   };

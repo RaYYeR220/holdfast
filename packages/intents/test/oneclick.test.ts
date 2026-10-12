@@ -154,7 +154,78 @@ describe('1Click swap status', () => {
       originTxs: ['aa11'],
       destinationTxs: ['bb22'],
       updatedAt: Date.parse('2026-10-10T12:40:00.000Z'),
+      quoted: null,
     });
+  });
+
+  // The shape of a live status answer: beside where the swap stands, the service repeats the quote it was made on.
+  const quoteResponse = (over: { request?: Record<string, unknown>; quote?: Record<string, unknown>; top?: Record<string, unknown> } = {}) => ({
+    timestamp: '2026-10-10T12:29:08.340Z',
+    signature: 'ed25519:3rrfHLec',
+    quoteRequest: {
+      dry: false,
+      swapType: 'EXACT_INPUT',
+      slippageTolerance: 100,
+      originAsset: ASSETS.ZEC,
+      destinationAsset: ASSETS.USDC_HYPERCORE,
+      amount: '460000',
+      refundTo: 't1Hsc1LR8yKnbbe3twRp88p6vFfC5t7DLbs',
+      recipient: '0x8ba1f109551bD432803012645Ac136ddd64DBA72',
+      deadline: '2026-10-10T13:29:07.896Z',
+      ...over.request,
+    },
+    quote: { ...quoteBody().quote, deadline: '2026-10-13T13:29:07.896Z', ...over.quote },
+    ...over.top,
+  });
+
+  it('repeats the quote the swap was made on: what was asked for, to whom, and when', async () => {
+    // As the service answers for a swap whose deposit it names no transaction for.
+    const body = { ...statusBody('SUCCESS', { amountIn: '460000', amountOut: '530112300', originChainTxHashes: [], destinationChainTxHashes: [{ hash: '0xbb22', explorerUrl: '' }] }), quoteResponse: quoteResponse() };
+    const s = await createOneClick({ fetch: fakeFetch(200, body) }).status('t1Rz5oeDUphb5vwrFvUXi9xWtyTTsLGvF6C');
+    expect(s).toEqual({
+      state: 'SUCCESS',
+      final: true,
+      amountIn: 460_000n,
+      amountOut: 530_112_300n,
+      originTxs: [],
+      destinationTxs: ['0xbb22'],
+      updatedAt: Date.parse('2026-10-10T12:40:00.000Z'),
+      quoted: {
+        originAsset: ASSETS.ZEC,
+        destinationAsset: ASSETS.USDC_HYPERCORE,
+        recipient: '0x8ba1f109551bD432803012645Ac136ddd64DBA72',
+        refundTo: 't1Hsc1LR8yKnbbe3twRp88p6vFfC5t7DLbs',
+        depositAddress: 't1Rz5oeDUphb5vwrFvUXi9xWtyTTsLGvF6C',
+        amountIn: 460_000n,
+        amountOut: 531_775_000n,
+        minAmountOut: 526_147_200n,
+        quotedAt: Date.parse('2026-10-10T12:29:08.340Z'),
+        deadline: Date.parse('2026-10-13T13:29:07.896Z'),
+        signature: 'ed25519:3rrfHLec',
+      },
+    });
+  });
+
+  it('takes no quote of which a part that says what the swap was is missing or unreadable', async () => {
+    const quotedOf = async (response: unknown) => (await createOneClick({ fetch: fakeFetch(200, { ...statusBody('SUCCESS', { amountIn: '460000' }), quoteResponse: response }) }).status('t1x')).quoted;
+    const broken: [string, unknown][] = [
+      ['no quote at all', undefined],
+      ['a quote that is not an object', 'SUCCESS'],
+      ['no request', { ...quoteResponse(), quoteRequest: undefined }],
+      ['no recipient', quoteResponse({ request: { recipient: '' } })],
+      ['a recipient that is not text', quoteResponse({ request: { recipient: 42 } })],
+      ['no origin asset', quoteResponse({ request: { originAsset: undefined } })],
+      ['no destination asset', quoteResponse({ request: { destinationAsset: null } })],
+      ['no deposit address', quoteResponse({ quote: { depositAddress: undefined } })],
+      ['an amount that is not digits', quoteResponse({ quote: { amountIn: '0.0046' } })],
+      ['an amount out as a number', quoteResponse({ quote: { amountOut: 531_775_000 } })],
+      ['no minimum', quoteResponse({ quote: { minAmountOut: undefined } })],
+      ['no time', quoteResponse({ top: { timestamp: undefined } })],
+      ['a time that is none', quoteResponse({ top: { timestamp: 'yesterday' } })],
+    ];
+    for (const [what, response] of broken) expect(await quotedOf(response), what).toBeNull();
+    // What is not needed to say what the swap was may be absent.
+    expect(await quotedOf(quoteResponse({ request: { refundTo: undefined }, quote: { deadline: undefined }, top: { signature: undefined } }))).toMatchObject({ refundTo: null, deadline: null, signature: '' });
   });
 
   it('knows which states are final', async () => {

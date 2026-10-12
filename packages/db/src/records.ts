@@ -81,6 +81,17 @@ export interface SwapRow {
   updatedAt: number;
 }
 
+/** A swap that had run its course before the database knew of it, as the swap service reports it afterwards. */
+export interface SettledSwap extends NewSwap {
+  amountOut: bigint | null;
+  originTxs: string[];
+  destinationTxs: string[];
+  /** When the swap was quoted, ms. */
+  createdAt: number;
+  /** When the swap service last changed it, which is when it settled, ms. */
+  updatedAt: number;
+}
+
 /** What the swap service last said about a swap. */
 export interface SwapSighting {
   state: string;

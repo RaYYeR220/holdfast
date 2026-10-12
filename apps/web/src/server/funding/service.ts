@@ -57,7 +57,8 @@ export type SwapRefresh =
   | { swapId: string; orgId: string; status: 'ok'; state: string; final: boolean }
   | { swapId: string; orgId: string; status: 'unavailable'; reason: string };
 
-function destination(deps: Pick<Deps, 'solana'>, org: OrgRecord, purpose: FundingPurpose): { asset: AssetId; recipient: string } {
+/** What a purpose is funded in and where it is delivered: the asset, and the organisation's own account for it. */
+export function fundingDestination(deps: Pick<Deps, 'solana'>, org: Pick<OrgRecord, 'hlUser' | 'solanaOwner'>, purpose: FundingPurpose): { asset: AssetId; recipient: string } {
   if (purpose === 'margin') return { asset: ASSETS.USDC_HYPERCORE, recipient: org.hlUser };
   if (deps.solana.cluster !== 'mainnet-beta' || deps.solana.mint !== SOLANA_USDC['mainnet-beta']) {
     throw refused('the swap service delivers USDC on Solana mainnet, and this deployment pays out in another token or on another cluster');
@@ -77,7 +78,7 @@ export async function quoteFunding(deps: Pick<Deps, 'store' | 'oneClick' | 'sola
   if (addressKind(request.refundTo) !== 'transparent') {
     throw invalid('refundTo must be a transparent Zcash address: the swap service returns ZEC to transparent addresses only');
   }
-  const { asset, recipient } = destination(deps, org, request.purpose);
+  const { asset, recipient } = fundingDestination(deps, org, request.purpose);
 
   let quote: Quote;
   try {
