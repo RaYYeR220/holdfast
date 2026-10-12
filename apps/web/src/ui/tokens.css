@@ -1,0 +1,93 @@
+/*
+ * Holdfast design tokens.
+ *
+ * Two inks and nothing else. Every tone on a page is the density of a dither
+ * on a 4px grid; every state is a pattern and a word. No element takes a
+ * third colour, an opacity between 0 and 1, a blur or a rounded corner.
+ */
+:root {
+  /* The two inks. */
+  --ink: #17261f;
+  --paper: #e9e6d2;
+
+  /*
+   * The ground an element stands on. `.hf-ink` and `.hf-paper` set these;
+   * every primitive draws with --fg on --bg and so works on both grounds.
+   */
+  --fg: var(--paper);
+  --bg: var(--ink);
+
+  /* One design pixel. Sizes, rules and offsets are whole multiples of it. */
+  --u: 4px;
+
+  /* Spacing, in design pixels. */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 20px;
+  --s6: 24px;
+  --s7: 28px;
+  --s8: 32px;
+  --s10: 40px;
+  --s12: 48px;
+  --s14: 56px;
+  --s18: 72px;
+  --s24: 96px;
+  --s28: 112px;
+
+  /* Rules. Frames and section rules are heavy; rows inside a panel are thin or dotted. */
+  --rule: 4px;
+  --rule-thin: 2px;
+
+  /* Focus: a heavy ring one design pixel clear of the element. */
+  --focus-width: 4px;
+  --focus-offset: 4px;
+
+  /*
+   * Faces. The pixel face is for headings, labels and short figures. Anything
+   * read as a sentence is set in the serif; dense figures in tables are set in
+   * the numeric face. The --font-* variables come from next/font (ui/fonts.ts).
+   */
+  --f-px: var(--font-px), 'Courier New', monospace;
+  --f-text: var(--font-text), 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
+  --f-num: var(--font-num), ui-monospace, 'Cascadia Mono', Consolas, monospace;
+
+  /*
+   * Pixel face sizes, as size/line-height. The face is drawn on a grid of a
+   * tenth of its size, so only multiples of 10px keep its pixels whole.
+   */
+  --px-1: 20px/24px;
+  --px-2: 30px/34px;
+  --px-3: 40px/44px;
+  --px-4: 60px/64px;
+  --px-5: 80px/88px;
+  --px-6: 100px/100px;
+
+  /* Serif sizes: small print, product body, page body, lead. */
+  --tx-s: 17px/25px;
+  --tx-m: 19px/28px;
+  --tx-l: 21px/32px;
+  --tx-xl: 24px/36px;
+
+  /* Numeric face sizes: table cells and identifiers. */
+  --num-s: 14px/24px;
+  --num-m: 16px/24px;
+
+  /* Widths. */
+  --page: 1296px;
+  --gutter: 72px;
+  --rail: 248px;
+}
+
+@media (max-width: 1199px) {
+  :root {
+    --gutter: 48px;
+  }
+}
+
+@media (max-width: 760px) {
+  :root {
+    --gutter: 16px;
+  }
+}

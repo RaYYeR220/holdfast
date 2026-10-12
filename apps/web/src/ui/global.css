@@ -1,0 +1,299 @@
+@import './tokens.css';
+
+/* ------------------------------------------------------------------
+   Base
+------------------------------------------------------------------- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+}
+
+/*
+ * The pixel face is always drawn with square pixels: its ELSH axis at 50.
+ * The `font` shorthand resets variation settings, so this is declared once,
+ * for everything, above any rule that uses the shorthand. No other face on
+ * the pages has the axis.
+ */
+*,
+*::before,
+*::after {
+  font-variation-settings: 'ELSH' 50 !important;
+}
+
+html {
+  background: var(--ink);
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  font: var(--tx-m) var(--f-text);
+  color: var(--paper);
+  background: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+}
+
+ul,
+ol {
+  list-style: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+  border-radius: 0;
+}
+
+table {
+  border-collapse: collapse;
+  border-spacing: 0;
+}
+
+canvas {
+  display: block;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+/* Visible focus, everywhere, in the ink of the ground the element stands on. */
+:focus-visible {
+  outline: var(--focus-width) solid var(--fg);
+  outline-offset: var(--focus-offset);
+}
+
+::selection {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+/* ------------------------------------------------------------------
+   Grounds. Everything is drawn with --fg on --bg.
+------------------------------------------------------------------- */
+.hf-ink {
+  --fg: var(--paper);
+  --bg: var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.hf-paper {
+  --fg: var(--ink);
+  --bg: var(--paper);
+  background: var(--paper);
+  color: var(--ink);
+}
+
+/* ------------------------------------------------------------------
+   Faces
+------------------------------------------------------------------- */
+
+/* The pixel face: headings, labels, short figures. Never a sentence. */
+.hf-px {
+  font-family: var(--f-px);
+  font-weight: 420;
+  font-style: normal;
+  font-variation-settings: 'ELSH' 50;
+  letter-spacing: 0;
+  -webkit-font-smoothing: none;
+}
+
+.hf-text {
+  font-family: var(--f-text);
+  font-weight: 400;
+}
+
+/* The numeric face: aligned figures, hashes, addresses. */
+.hf-num {
+  font-family: var(--f-num);
+  font-weight: 400;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.84em;
+  letter-spacing: 0;
+}
+
+.hf-small {
+  font: var(--tx-s) var(--f-text);
+}
+
+.hf-lead {
+  font: var(--tx-xl) var(--f-text);
+}
+
+.hf-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------
+   Tones: the four densities of the dither, as backgrounds in --fg.
+   The same fills exist for canvas in onebit/patterns.ts.
+------------------------------------------------------------------- */
+.hf-t12 {
+  background:
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 0 0 / 16px 16px,
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 8px 8px / 16px 16px;
+}
+
+.hf-t25 {
+  background: conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 0 0 / 8px 8px;
+}
+
+.hf-t50 {
+  background: conic-gradient(var(--fg) 25%, #0000 0 50%, var(--fg) 0 75%, #0000 0) 0 0 / 8px 8px;
+}
+
+.hf-t75 {
+  background: conic-gradient(from 270deg at 4px 4px, #0000 90deg, var(--fg) 0) 0 0 / 8px 8px;
+}
+
+/* ------------------------------------------------------------------
+   States: locked, unlocked, refused, limit, stale. Each is a fill and,
+   wherever it is shown, a word beside it. Never a colour.
+------------------------------------------------------------------- */
+.hf-pat-locked {
+  background: var(--fg);
+}
+
+.hf-pat-unlocked {
+  background: conic-gradient(var(--fg) 25%, #0000 0 50%, var(--fg) 0 75%, #0000 0) 0 0 / 8px 8px;
+}
+
+.hf-pat-refused {
+  background:
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 12px 0 / 16px 16px,
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 8px 4px / 16px 16px,
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 4px 8px / 16px 16px,
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 0 12px / 16px 16px;
+}
+
+.hf-pat-limit {
+  background:
+    linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 0 / 8px 4px repeat-x,
+    linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 100% / 8px 4px repeat-x,
+    linear-gradient(0deg, var(--fg) 50%, #0000 0) 0 0 / 4px 8px repeat-y,
+    linear-gradient(0deg, var(--fg) 50%, #0000 0) 100% 0 / 4px 8px repeat-y;
+}
+
+.hf-pat-stale {
+  background:
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 0 0 / 16px 16px,
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 8px 8px / 16px 16px;
+}
+
+/* A small square of a fill, set beside the word that names it. */
+.hf-swatch {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  vertical-align: -3px;
+}
+
+/* At swatch size the stair hatch is tightened to three steps so it still reads as a hatch. */
+.hf-swatch.hf-pat-refused {
+  width: 24px;
+  height: 24px;
+  background:
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 8px 0 / 12px 12px,
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 4px 4px / 12px 12px,
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 0 8px / 12px 12px;
+}
+
+.hf-swatch.hf-pat-stale {
+  outline: 2px solid var(--fg);
+  outline-offset: -2px;
+}
+
+/* The pixel tick: a criterion met, a check passed. */
+.hf-tick {
+  display: inline-block;
+  width: 28px;
+  height: 20px;
+  flex: none;
+  fill: currentColor;
+  vertical-align: -3px;
+}
+
+/* ------------------------------------------------------------------
+   Rules
+------------------------------------------------------------------- */
+.hf-rule {
+  border: 0;
+  border-top: var(--rule) solid var(--fg);
+}
+
+.hf-rule-dot {
+  background: linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 100% / 8px 4px repeat-x;
+}
+
+/* The four tones as a band, closing a section. */
+.hf-band > i {
+  display: block;
+  height: 16px;
+}
+
+/* ------------------------------------------------------------------
+   DitherCanvas
+------------------------------------------------------------------- */
+.hf-dither {
+  position: relative;
+  overflow: hidden;
+}
+
+.hf-dither__canvas {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+.hf-dither__labels {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.hf-dither__label {
+  position: absolute;
+  font: var(--px-1) var(--f-px);
+  font-weight: 420;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+  line-height: 20px;
+  padding: 4px 8px 4px 6px;
+  background: var(--ink);
+  color: var(--paper);
+  white-space: nowrap;
+}
+
+.hf-dither__label--bare {
+  background: none;
+  padding: 0;
+}
+
+.hf-dither__label--ink {
+  color: var(--ink);
+}

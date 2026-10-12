@@ -1,0 +1,318 @@
+/*
+ * The application shell: an ink rail and header around a paper page.
+ */
+.hf-shell {
+  display: grid;
+  grid-template-columns: var(--rail) minmax(0, 1fr);
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+.hf-shell__skip {
+  position: absolute;
+  left: 8px;
+  top: -80px;
+  z-index: 30;
+  padding: 10px 12px;
+  background: var(--paper);
+  color: var(--ink);
+  font: var(--px-1) var(--f-px);
+  font-weight: 420;
+  text-decoration: none;
+}
+
+.hf-shell__skip:focus {
+  top: 8px;
+}
+
+/* ---------- rail ---------- */
+.hf-shell__rail {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  padding: 24px 0 24px 24px;
+  overflow-y: auto;
+}
+
+.hf-shell__mark {
+  align-self: flex-start;
+  font: var(--px-3) var(--f-px);
+  font-weight: 420;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+  line-height: 40px;
+  color: var(--paper);
+  text-decoration: none;
+  padding: 4px 8px 4px 4px;
+  margin-left: -4px;
+}
+
+.hf-shell__mark:hover {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.hf-shell__nav {
+  margin-top: 40px;
+}
+
+.hf-shell__nav ul {
+  display: flex;
+  flex-direction: column;
+}
+
+.hf-shell__link {
+  display: block;
+  font: var(--px-1) var(--f-px);
+  font-weight: 420;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+  line-height: 20px;
+  color: var(--paper);
+  text-decoration: none;
+  padding: 14px 16px 14px 12px;
+  margin-left: -12px;
+  background: linear-gradient(90deg, var(--paper) 50%, #0000 0) 12px 100% / 8px 2px repeat-x;
+}
+
+.hf-shell__nav li:last-child .hf-shell__link {
+  background: none;
+}
+
+.hf-shell__link:hover {
+  background: linear-gradient(90deg, var(--paper) 50%, #0000 0) 12px 100% / 8px 4px repeat-x;
+}
+
+/* The section being read: a solid plate that runs to the edge of the rail. */
+.hf-shell__link[aria-current='page'] {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.hf-shell__link:focus-visible {
+  outline-offset: -8px;
+  outline-color: currentColor;
+}
+
+.hf-shell__railfoot {
+  margin-top: auto;
+  padding-top: 32px;
+  font: var(--tx-s) var(--f-text);
+  font-style: italic;
+}
+
+/* ---------- header ---------- */
+.hf-shell__main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-left: var(--rule) solid var(--paper);
+}
+
+.hf-shell__head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px 32px;
+  flex-wrap: wrap;
+  padding: 24px var(--s10) 20px;
+}
+
+.hf-shell__org {
+  min-width: 0;
+}
+
+.hf-shell__orglabel {
+  font: var(--tx-s) var(--f-text);
+  font-style: italic;
+}
+
+.hf-shell__orgname {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font: var(--px-2) var(--f-px);
+  font-weight: 420;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+  overflow-wrap: anywhere;
+}
+
+.hf-shell__orghint {
+  font: var(--tx-l) var(--f-text);
+}
+
+.hf-shell__aside {
+  display: flex;
+  align-items: center;
+  gap: 12px 24px;
+  flex-wrap: wrap;
+}
+
+.hf-shell__who {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font: var(--px-1) var(--f-px);
+  font-weight: 420;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+  line-height: 20px;
+  padding: 8px 12px 8px 10px;
+  box-shadow: inset 0 0 0 2px var(--paper);
+  white-space: nowrap;
+}
+
+.hf-shell__who .hf-swatch {
+  width: 16px;
+  height: 16px;
+  vertical-align: 0;
+}
+
+.hf-shell__address {
+  font: var(--num-m) var(--f-num);
+}
+
+/* The four tones, stepping from the ink of the header down to the paper of the page. */
+.hf-shell__band > i {
+  display: block;
+  height: 8px;
+}
+
+/* ---------- page ---------- */
+.hf-shell__page {
+  flex: 1;
+  padding: var(--s8) var(--s10) var(--s24);
+}
+
+.hf-shell__inner {
+  max-width: 1200px;
+}
+
+.hf-shell__banner {
+  margin-bottom: var(--s8);
+}
+
+/* Layout helpers for pages inside the shell. */
+.hf-grid {
+  display: grid;
+  gap: var(--s6);
+}
+
+.hf-grid--2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.hf-grid--3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.hf-grid--4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.hf-stack > * + * {
+  margin-top: var(--s6);
+}
+
+.hf-stack--loose > * + * {
+  margin-top: var(--s12);
+}
+
+@media (max-width: 1279px) {
+  .hf-grid--4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ---------- 999 and below: the rail becomes a strip under the header ---------- */
+@media (max-width: 999px) {
+  .hf-shell {
+    display: block;
+  }
+
+  .hf-shell__rail {
+    position: static;
+    height: auto;
+    padding: 12px 0 0 var(--gutter);
+    overflow: visible;
+  }
+
+  .hf-shell__main {
+    border-left: 0;
+  }
+
+  .hf-shell__mark {
+    font: var(--px-2) var(--f-px);
+    font-weight: 420;
+    line-height: 30px;
+  }
+
+  .hf-shell__nav {
+    margin-top: 8px;
+    margin-left: calc(-1 * var(--gutter));
+    border-top: var(--rule) solid var(--paper);
+    border-bottom: var(--rule) solid var(--paper);
+  }
+
+  .hf-shell__nav ul {
+    flex-direction: row;
+    overflow-x: auto;
+    padding: 0 calc(var(--gutter) - 12px);
+    scrollbar-width: none;
+  }
+
+  .hf-shell__nav ul::-webkit-scrollbar {
+    display: none;
+  }
+
+  .hf-shell__link {
+    margin: 0;
+    padding: 12px;
+    background: none;
+    white-space: nowrap;
+  }
+
+  .hf-shell__link:hover {
+    background: linear-gradient(90deg, var(--paper) 50%, #0000 0) 12px 100% / 8px 4px repeat-x;
+  }
+
+  .hf-shell__railfoot {
+    display: none;
+  }
+
+  .hf-shell__head {
+    padding: 16px var(--gutter);
+  }
+
+  .hf-shell__page {
+    padding: var(--s6) var(--gutter) var(--s18);
+  }
+
+  .hf-grid--3 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .hf-shell__orgname {
+    font: var(--px-1) var(--f-px);
+    font-weight: 500;
+    font-size: 20px;
+    line-height: 26px;
+  }
+
+  .hf-shell__who {
+    padding: 4px 8px 4px 6px;
+  }
+
+  .hf-grid--2,
+  .hf-grid--3,
+  .hf-grid--4 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

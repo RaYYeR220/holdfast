@@ -1,0 +1,1444 @@
+/*
+ * The primitives. Each draws with --fg on --bg and so reads the same on the
+ * ink ground and on the paper ground. Text never sits on a pattern: where a
+ * fill runs behind a label, the label carries its own plate of --bg.
+ */
+
+/* ------------------------------------------------------------------
+   Button
+------------------------------------------------------------------- */
+.hf-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  position: relative;
+  border: 0;
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+  font: var(--px-1) var(--f-px);
+  font-weight: 420;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+  line-height: 20px;
+  padding: 16px 20px 16px 16px;
+  color: var(--fg);
+  background: var(--bg);
+}
+
+.hf-btn--small {
+  padding: 8px 12px 8px 10px;
+}
+
+/* Primary: a solid plate with a stepped shadow. */
+.hf-btn--primary {
+  color: var(--bg);
+  background: var(--fg);
+  box-shadow:
+    4px 4px 0 0 var(--bg),
+    8px 8px 0 0 var(--fg);
+  margin: 0 8px 8px 0;
+}
+
+.hf-btn--primary:hover:not([aria-disabled='true'], :disabled, [aria-busy='true']) {
+  color: var(--fg);
+  background: var(--bg);
+  box-shadow:
+    inset 0 0 0 4px var(--fg),
+    4px 4px 0 0 var(--bg),
+    8px 8px 0 0 var(--fg);
+}
+
+.hf-btn--primary:focus-visible {
+  outline-offset: 12px;
+}
+
+/* Secondary: a heavy frame. */
+.hf-btn--secondary {
+  box-shadow: inset 0 0 0 4px var(--fg);
+}
+
+.hf-btn--secondary:hover:not([aria-disabled='true'], :disabled, [aria-busy='true']) {
+  color: var(--bg);
+  background: var(--fg);
+}
+
+/* Quiet: a label on a dotted line. */
+.hf-btn--quiet {
+  padding: 8px 2px 10px;
+  background: linear-gradient(90deg, var(--fg) 50%, #0000 50%) 0 100% / 8px 2px repeat-x;
+}
+
+.hf-btn--quiet.hf-btn--small {
+  padding: 4px 2px 8px;
+}
+
+.hf-btn--quiet:hover:not([aria-disabled='true'], :disabled, [aria-busy='true']) {
+  background-size: 8px 4px;
+}
+
+/* Destructive: framed in the stair hatch of a refusal, and it says so in words. */
+.hf-btn--destructive {
+  border: 8px solid #0000;
+  padding: 8px 12px 8px 8px;
+  background:
+    linear-gradient(var(--bg), var(--bg)) padding-box,
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 12px 0 / 16px 16px border-box,
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 8px 4px / 16px 16px border-box,
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 4px 8px / 16px 16px border-box,
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 0 12px / 16px 16px border-box,
+    linear-gradient(var(--bg), var(--bg)) border-box;
+  box-shadow: 0 0 0 4px var(--fg);
+  margin: 4px;
+}
+
+.hf-btn--destructive.hf-btn--small {
+  padding: 0 8px 0 4px;
+}
+
+.hf-btn--destructive:hover:not([aria-disabled='true'], :disabled, [aria-busy='true']) {
+  color: var(--bg);
+  background:
+    linear-gradient(var(--fg), var(--fg)) padding-box,
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 12px 0 / 16px 16px border-box,
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 8px 4px / 16px 16px border-box,
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 4px 8px / 16px 16px border-box,
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 0 12px / 16px 16px border-box,
+    linear-gradient(var(--bg), var(--bg)) border-box;
+}
+
+.hf-btn--destructive:focus-visible {
+  outline-offset: 8px;
+}
+
+/* Busy: a checker runs across the plate; the label keeps its own ground. */
+.hf-btn[aria-busy='true'] {
+  cursor: progress;
+  color: var(--fg);
+  background:
+    conic-gradient(var(--fg) 25%, #0000 0 50%, var(--fg) 0 75%, #0000 0) 0 0 / 8px 8px,
+    var(--bg);
+  box-shadow: inset 0 0 0 4px var(--fg);
+  animation: hf-march 0.5s steps(2, end) infinite;
+}
+
+.hf-btn--primary[aria-busy='true'] {
+  box-shadow:
+    inset 0 0 0 4px var(--fg),
+    4px 4px 0 0 var(--bg),
+    8px 8px 0 0 var(--fg);
+}
+
+.hf-btn[aria-busy='true'] .hf-btn__label {
+  background: var(--bg);
+  box-shadow: 0 0 0 4px var(--bg);
+}
+
+@keyframes hf-march {
+  to {
+    background-position:
+      8px 0,
+      0 0;
+  }
+}
+
+/* Disabled: a dotted outline around sparse dots. It cannot be pressed and does not look as if it could. */
+.hf-btn:disabled,
+.hf-btn[aria-disabled='true'] {
+  cursor: not-allowed;
+  color: var(--fg);
+  margin: 0;
+  box-shadow: none;
+  background:
+    linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 0 / 8px 4px repeat-x,
+    linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 100% / 8px 4px repeat-x,
+    linear-gradient(0deg, var(--fg) 50%, #0000 0) 0 0 / 4px 8px repeat-y,
+    linear-gradient(0deg, var(--fg) 50%, #0000 0) 100% 0 / 4px 8px repeat-y,
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 0 0 / 16px 16px,
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 8px 8px / 16px 16px,
+    var(--bg);
+  border: 0;
+  padding: 16px 20px 16px 16px;
+}
+
+.hf-btn--small:disabled,
+.hf-btn--small[aria-disabled='true'] {
+  padding: 8px 12px 8px 10px;
+}
+
+.hf-btn--primary:disabled,
+.hf-btn--primary[aria-disabled='true'] {
+  margin: 0 8px 8px 0;
+}
+
+.hf-btn--destructive:disabled,
+.hf-btn--destructive[aria-disabled='true'] {
+  margin: 4px;
+}
+
+.hf-btn:disabled .hf-btn__label,
+.hf-btn[aria-disabled='true'] .hf-btn__label {
+  background: var(--bg);
+  box-shadow: 0 0 0 4px var(--bg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hf-btn[aria-busy='true'] {
+    animation: none;
+  }
+}
+
+/* ------------------------------------------------------------------
+   Link
+------------------------------------------------------------------- */
+.hf-link {
+  color: var(--fg);
+  cursor: pointer;
+  text-decoration: none;
+  padding-bottom: 3px;
+  background: linear-gradient(90deg, var(--fg) 50%, #0000 50%) 0 100% / 8px 2px repeat-x;
+}
+
+.hf-link:hover {
+  background-size: 8px 4px;
+}
+
+.hf-link--emphasis {
+  font-style: italic;
+}
+
+/* A navigation link: a pixel label on a plate that inverts. */
+.hf-link--nav {
+  display: inline-block;
+  font: var(--px-1) var(--f-px);
+  font-weight: 420;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+  line-height: 20px;
+  padding: 10px 8px;
+  background: var(--bg);
+}
+
+.hf-link--nav:hover,
+.hf-link--nav[aria-current='page'] {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+.hf-link__out {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-left: 6px;
+  fill: currentColor;
+}
+
+/* ------------------------------------------------------------------
+   Panel
+------------------------------------------------------------------- */
+.hf-panel {
+  border: var(--rule) solid var(--fg);
+  background: var(--bg);
+  color: var(--fg);
+  min-width: 0;
+}
+
+/* A double frame, for the one thing on a screen that matters most. */
+.hf-panel--framed {
+  margin: 8px;
+  outline: var(--rule) solid var(--fg);
+  outline-offset: 4px;
+}
+
+/* A panel on the other ground. */
+.hf-panel--inverse {
+  --panel-fg: var(--bg);
+  --panel-bg: var(--fg);
+  border-color: var(--panel-bg);
+  background: var(--panel-bg);
+  color: var(--panel-fg);
+}
+
+.hf-panel--inverse > * {
+  --fg: var(--panel-fg);
+  --bg: var(--panel-bg);
+}
+
+.hf-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  flex-wrap: wrap;
+  padding: 10px 16px 10px 14px;
+  border-bottom: var(--rule) solid var(--fg);
+}
+
+.hf-panel__title {
+  font: var(--px-1) var(--f-px);
+  font-weight: 500;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+}
+
+.hf-panel__aside {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.hf-panel__body {
+  padding: 16px;
+}
+
+.hf-panel__body--flush {
+  padding: 0;
+}
+
+.hf-panel__foot {
+  padding: 10px 16px;
+  border-top: var(--rule-thin) solid var(--fg);
+  font: var(--tx-s) var(--f-text);
+}
+
+/* ------------------------------------------------------------------
+   SectionHeading
+------------------------------------------------------------------- */
+.hf-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  column-gap: 48px;
+  row-gap: 16px;
+  align-items: end;
+  margin-bottom: var(--s8);
+}
+
+.hf-heading--solo {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.hf-heading__title {
+  font: var(--px-3) var(--f-px);
+  font-weight: 420;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+  margin-left: -2px;
+}
+
+.hf-heading--page .hf-heading__title {
+  font: var(--px-4) var(--f-px);
+  font-weight: 420;
+  margin-left: -4px;
+}
+
+.hf-heading--minor .hf-heading__title {
+  font: var(--px-2) var(--f-px);
+  font-weight: 420;
+  margin-left: 0;
+}
+
+.hf-heading__kicker {
+  display: block;
+  font: var(--px-1) var(--f-px);
+  font-weight: 420;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+  margin-bottom: 8px;
+}
+
+.hf-heading__lead {
+  font: var(--tx-l) var(--f-text);
+  max-width: 34em;
+}
+
+.hf-heading--rule {
+  padding-bottom: var(--s5);
+  border-bottom: var(--rule) solid var(--fg);
+}
+
+@media (max-width: 999px) {
+  .hf-heading {
+    grid-template-columns: minmax(0, 1fr);
+    margin-bottom: var(--s6);
+  }
+
+  .hf-heading--page .hf-heading__title {
+    font: var(--px-3) var(--f-px);
+    font-weight: 420;
+    margin-left: -2px;
+  }
+}
+
+@media (max-width: 760px) {
+  .hf-heading__title,
+  .hf-heading--page .hf-heading__title {
+    font: var(--px-2) var(--f-px);
+    font-weight: 420;
+    margin-left: -2px;
+  }
+
+  .hf-heading__lead {
+    font: var(--tx-m) var(--f-text);
+  }
+}
+
+/* ------------------------------------------------------------------
+   Stat
+------------------------------------------------------------------- */
+.hf-stat {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.hf-stat__label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font: var(--px-1) var(--f-px);
+  font-weight: 420;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+}
+
+.hf-stat__figure {
+  font: var(--px-3) var(--f-px);
+  font-weight: 420;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+  margin: 8px 0 0 -2px;
+  white-space: nowrap;
+}
+
+.hf-stat--large .hf-stat__figure {
+  font: var(--px-4) var(--f-px);
+  font-weight: 420;
+  margin-left: -4px;
+}
+
+.hf-stat--small .hf-stat__figure {
+  font: var(--px-2) var(--f-px);
+  font-weight: 420;
+  margin-left: 0;
+}
+
+.hf-stat__unit {
+  font: var(--px-1) var(--f-px);
+  font-weight: 420;
+  margin-left: 8px;
+}
+
+.hf-stat__note {
+  font: var(--tx-s) var(--f-text);
+  margin-top: 6px;
+}
+
+.hf-stat__asof {
+  font: var(--tx-s) var(--f-text);
+  font-style: italic;
+  margin-top: 6px;
+}
+
+.hf-stat__gap {
+  margin-top: 8px;
+}
+
+/* ------------------------------------------------------------------
+   Tag, StateTag
+------------------------------------------------------------------- */
+.hf-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font: var(--px-1) var(--f-px);
+  font-weight: 420;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+  line-height: 20px;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.hf-tag--boxed {
+  padding: 4px 8px 4px 6px;
+  box-shadow: inset 0 0 0 2px var(--fg);
+}
+
+.hf-tag--solid {
+  padding: 4px 8px 4px 6px;
+  background: var(--fg);
+  color: var(--bg);
+}
+
+.hf-tag .hf-swatch {
+  width: 16px;
+  height: 16px;
+  vertical-align: 0;
+}
+
+.hf-tag .hf-swatch.hf-pat-refused {
+  width: 16px;
+  height: 16px;
+  background:
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 12px 0 / 16px 16px,
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 8px 4px / 16px 16px,
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 4px 8px / 16px 16px,
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 0 12px / 16px 16px;
+}
+
+/* ------------------------------------------------------------------
+   DataTable
+------------------------------------------------------------------- */
+.hf-table-wrap {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.hf-table {
+  width: 100%;
+  min-width: max-content;
+  font: 18px/24px var(--f-text);
+}
+
+.hf-table caption {
+  text-align: left;
+  font: var(--px-1) var(--f-px);
+  font-weight: 500;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+  padding: 0 0 10px;
+}
+
+.hf-table th {
+  text-align: left;
+  font: var(--px-1) var(--f-px);
+  font-weight: 420;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+  white-space: nowrap;
+}
+
+.hf-table thead th {
+  padding: 8px 20px 8px 0;
+  border-top: var(--rule) solid var(--fg);
+  border-bottom: var(--rule) solid var(--fg);
+  vertical-align: bottom;
+}
+
+.hf-table td,
+.hf-table tbody th {
+  padding: 8px 20px 10px 0;
+  vertical-align: top;
+  background: linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 100% / 8px 2px repeat-x;
+}
+
+.hf-table tbody th {
+  font: 18px/24px var(--f-text);
+  font-weight: 400;
+  white-space: normal;
+}
+
+.hf-table tr > :last-child {
+  padding-right: 0;
+}
+
+.hf-table tbody tr:last-child > * {
+  background: none;
+  border-bottom: var(--rule-thin) solid var(--fg);
+}
+
+.hf-table .hf-table__num {
+  text-align: right;
+  font: var(--num-m) var(--f-num);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.hf-table thead .hf-table__num {
+  font: var(--px-1) var(--f-px);
+  font-weight: 420;
+}
+
+.hf-table .hf-table__state {
+  white-space: nowrap;
+  padding-right: 20px;
+}
+
+.hf-table--dense td,
+.hf-table--dense tbody th {
+  padding: 4px 16px 6px 0;
+}
+
+/* A refused row is struck through its whole width by the hatch along its lower edge. */
+.hf-table tr[data-state='refused'] > * {
+  background:
+    conic-gradient(from 270deg at 2px 2px, var(--fg) 90deg, #0000 0) 6px 100% / 8px 2px repeat-x,
+    linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 100% / 8px 2px repeat-x;
+}
+
+.hf-table__empty {
+  font-style: italic;
+  padding: 16px 0;
+}
+
+/* ------------------------------------------------------------------
+   KeyValue
+------------------------------------------------------------------- */
+.hf-kv {
+  display: grid;
+  grid-template-columns: minmax(120px, max-content) minmax(0, 1fr);
+  column-gap: 24px;
+}
+
+.hf-kv > div {
+  display: grid;
+  grid-template-columns: subgrid;
+  grid-column: 1 / -1;
+  align-items: baseline;
+  padding: 8px 0 10px;
+  background: linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 100% / 8px 2px repeat-x;
+}
+
+.hf-kv > div:last-child {
+  background: none;
+}
+
+.hf-kv dt {
+  font: var(--px-1) var(--f-px);
+  font-weight: 420;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+}
+
+.hf-kv dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.hf-kv--stack {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.hf-kv--stack dt {
+  margin-bottom: 2px;
+}
+
+@media (max-width: 520px) {
+  .hf-kv {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .hf-kv dt {
+    margin-bottom: 2px;
+  }
+}
+
+/* ------------------------------------------------------------------
+   Field, Input, Textarea, Select, Checkbox, Toggle
+------------------------------------------------------------------- */
+.hf-field {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.hf-field__label {
+  font: var(--px-1) var(--f-px);
+  font-weight: 420;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+  margin-bottom: 6px;
+}
+
+.hf-field__hint {
+  font: var(--tx-s) var(--f-text);
+  font-style: italic;
+  margin-bottom: 8px;
+}
+
+.hf-field__error {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font: var(--tx-s) var(--f-text);
+  margin-top: 8px;
+}
+
+.hf-field__error .hf-swatch {
+  width: 16px;
+  height: 16px;
+  margin-top: 5px;
+  background:
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 12px 0 / 16px 16px,
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 8px 4px / 16px 16px,
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 4px 8px / 16px 16px,
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 0 12px / 16px 16px;
+}
+
+.hf-input,
+.hf-textarea,
+.hf-select {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  font: var(--tx-m) var(--f-text);
+  color: var(--fg);
+  background: var(--bg);
+  border: 4px solid var(--fg);
+  padding: 8px 12px 10px;
+  appearance: none;
+}
+
+.hf-input--num {
+  font: 17px/28px var(--f-num);
+  font-variant-numeric: tabular-nums;
+}
+
+.hf-textarea {
+  min-height: 112px;
+  resize: vertical;
+}
+
+.hf-input::placeholder,
+.hf-textarea::placeholder {
+  color: var(--fg);
+  opacity: 1;
+  font-style: italic;
+}
+
+.hf-input:focus-visible,
+.hf-textarea:focus-visible,
+.hf-select:focus-visible {
+  outline-offset: 2px;
+}
+
+/* An input that was refused is framed in the hatch. */
+.hf-input[aria-invalid='true'],
+.hf-textarea[aria-invalid='true'],
+.hf-select[aria-invalid='true'] {
+  border: 8px solid #0000;
+  padding: 4px 8px 6px;
+  background:
+    linear-gradient(var(--bg), var(--bg)) padding-box,
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 12px 0 / 16px 16px border-box,
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 8px 4px / 16px 16px border-box,
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 4px 8px / 16px 16px border-box,
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 0 12px / 16px 16px border-box,
+    linear-gradient(var(--bg), var(--bg)) border-box;
+  box-shadow: inset 0 0 0 2px var(--fg);
+}
+
+.hf-input:disabled,
+.hf-textarea:disabled,
+.hf-select:disabled {
+  cursor: not-allowed;
+  border: 4px solid #0000;
+  background:
+    linear-gradient(var(--bg), var(--bg)) padding-box,
+    linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 0 / 8px 4px repeat-x border-box,
+    linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 100% / 8px 4px repeat-x border-box,
+    linear-gradient(0deg, var(--fg) 50%, #0000 0) 0 0 / 4px 8px repeat-y border-box,
+    linear-gradient(0deg, var(--fg) 50%, #0000 0) 100% 0 / 4px 8px repeat-y border-box,
+    var(--bg);
+}
+
+.hf-select-wrap {
+  position: relative;
+  display: block;
+}
+
+.hf-select {
+  padding-right: 44px;
+  cursor: pointer;
+}
+
+/* The select's arrow: three stacked bars, narrowing. */
+.hf-select-wrap::after {
+  content: '';
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  width: 12px;
+  height: 6px;
+  margin-top: -3px;
+  pointer-events: none;
+  background:
+    linear-gradient(var(--fg), var(--fg)) 0 0 / 12px 2px no-repeat,
+    linear-gradient(var(--fg), var(--fg)) 2px 2px / 8px 2px no-repeat,
+    linear-gradient(var(--fg), var(--fg)) 4px 4px / 4px 2px no-repeat;
+}
+
+.hf-select option {
+  color: var(--ink);
+  background: var(--paper);
+}
+
+.hf-check {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 12px;
+  cursor: pointer;
+}
+
+.hf-check input {
+  appearance: none;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  margin-top: 2px;
+  border: 4px solid var(--fg);
+  background: var(--bg);
+  cursor: pointer;
+}
+
+/* Checked: the pixel tick, cut out of a solid square. */
+.hf-check input:checked {
+  background:
+    linear-gradient(var(--bg), var(--bg)) 2px 8px / 2px 2px no-repeat,
+    linear-gradient(var(--bg), var(--bg)) 4px 10px / 2px 2px no-repeat,
+    linear-gradient(var(--bg), var(--bg)) 6px 12px / 2px 2px no-repeat,
+    linear-gradient(var(--bg), var(--bg)) 8px 10px / 2px 2px no-repeat,
+    linear-gradient(var(--bg), var(--bg)) 10px 8px / 2px 2px no-repeat,
+    linear-gradient(var(--bg), var(--bg)) 12px 6px / 2px 2px no-repeat,
+    linear-gradient(var(--bg), var(--bg)) 14px 4px / 2px 2px no-repeat,
+    var(--fg);
+  background-origin: border-box;
+}
+
+.hf-check input:disabled {
+  cursor: not-allowed;
+  border: 4px solid #0000;
+  background:
+    linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 0 / 8px 4px repeat-x border-box,
+    linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 100% / 8px 4px repeat-x border-box,
+    linear-gradient(0deg, var(--fg) 50%, #0000 0) 0 0 / 4px 8px repeat-y border-box,
+    linear-gradient(0deg, var(--fg) 50%, #0000 0) 100% 0 / 4px 8px repeat-y border-box;
+}
+
+.hf-check__text {
+  min-width: 0;
+}
+
+.hf-check__hint {
+  display: block;
+  font: var(--tx-s) var(--f-text);
+  font-style: italic;
+}
+
+/* Toggle: a lever with both positions written on it. */
+.hf-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.hf-toggle__label {
+  font: var(--px-1) var(--f-px);
+  font-weight: 420;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+}
+
+.hf-lever {
+  display: inline-flex;
+  border: 4px solid var(--fg);
+  background: var(--bg);
+  padding: 4px;
+  cursor: pointer;
+  color: var(--fg);
+  font: var(--px-1) var(--f-px);
+  font-weight: 420;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+  line-height: 20px;
+}
+
+.hf-lever__opt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px 10px 12px;
+}
+
+.hf-lever--small .hf-lever__opt {
+  padding: 4px 10px 4px 8px;
+}
+
+.hf-lever__opt .hf-swatch {
+  width: 16px;
+  height: 16px;
+  vertical-align: 0;
+}
+
+.hf-lever[aria-checked='true'] .hf-lever__on,
+.hf-lever[aria-checked='false'] .hf-lever__off {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+.hf-lever[aria-checked='true'] .hf-lever__on .hf-swatch,
+.hf-lever[aria-checked='false'] .hf-lever__off .hf-swatch {
+  --lever-fg: var(--bg);
+}
+
+.hf-lever__on .hf-swatch {
+  background: var(--lever-fg, var(--fg));
+}
+
+.hf-lever__off .hf-swatch {
+  background: conic-gradient(var(--lever-fg, var(--fg)) 25%, #0000 0 50%, var(--lever-fg, var(--fg)) 0 75%, #0000 0) 0 0 / 8px 8px;
+}
+
+.hf-lever:disabled {
+  cursor: not-allowed;
+  border: 4px solid #0000;
+  background:
+    linear-gradient(var(--bg), var(--bg)) padding-box,
+    linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 0 / 8px 4px repeat-x border-box,
+    linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 100% / 8px 4px repeat-x border-box,
+    linear-gradient(0deg, var(--fg) 50%, #0000 0) 0 0 / 4px 8px repeat-y border-box,
+    linear-gradient(0deg, var(--fg) 50%, #0000 0) 100% 0 / 4px 8px repeat-y border-box;
+}
+
+/* ------------------------------------------------------------------
+   Notice
+------------------------------------------------------------------- */
+.hf-notice {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  background: var(--bg);
+  color: var(--fg);
+  border: var(--rule) solid var(--fg);
+}
+
+.hf-notice__band {
+  border-right: var(--rule) solid var(--fg);
+}
+
+.hf-notice__main {
+  padding: 12px 16px 14px;
+  min-width: 0;
+}
+
+.hf-notice__title {
+  display: flex;
+  align-items: baseline;
+  gap: 4px 12px;
+  flex-wrap: wrap;
+  font: var(--px-1) var(--f-px);
+  font-weight: 500;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+  margin-bottom: 4px;
+}
+
+.hf-notice__kind {
+  background: var(--fg);
+  color: var(--bg);
+  padding: 2px 8px 2px 6px;
+  font-weight: 420;
+}
+
+.hf-notice__body {
+  font: var(--tx-m) var(--f-text);
+}
+
+.hf-notice__body > * + * {
+  margin-top: 8px;
+}
+
+/* A warning is fenced with the dotted outline of a limit. */
+.hf-notice--warning {
+  border: var(--rule) solid #0000;
+  background:
+    linear-gradient(var(--bg), var(--bg)) padding-box,
+    linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 0 / 8px 4px repeat-x border-box,
+    linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 100% / 8px 4px repeat-x border-box,
+    linear-gradient(0deg, var(--fg) 50%, #0000 0) 0 0 / 4px 8px repeat-y border-box,
+    linear-gradient(0deg, var(--fg) 50%, #0000 0) 100% 0 / 4px 8px repeat-y border-box,
+    var(--bg);
+}
+
+.hf-notice--warning .hf-notice__band {
+  border-right: 0;
+  background:
+    linear-gradient(0deg, var(--fg) 50%, #0000 0) 100% 0 / 4px 8px repeat-y,
+    conic-gradient(var(--fg) 25%, #0000 0 50%, var(--fg) 0 75%, #0000 0) 0 0 / 8px 8px;
+}
+
+/* ------------------------------------------------------------------
+   Tabs
+------------------------------------------------------------------- */
+.hf-tabs__list {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  border-bottom: var(--rule) solid var(--fg);
+  scrollbar-width: none;
+}
+
+.hf-tabs__list::-webkit-scrollbar {
+  display: none;
+}
+
+.hf-tabs__tab {
+  flex: none;
+  border: 0;
+  cursor: pointer;
+  font: var(--px-1) var(--f-px);
+  font-weight: 420;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+  line-height: 20px;
+  padding: 12px 16px 12px 12px;
+  color: var(--fg);
+  background: var(--bg);
+  white-space: nowrap;
+}
+
+.hf-tabs__tab:hover {
+  background: linear-gradient(90deg, var(--fg) 50%, #0000 0) 0 100% / 8px 4px repeat-x;
+}
+
+.hf-tabs__tab[aria-selected='true'] {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+.hf-tabs__tab:focus-visible {
+  outline-offset: -8px;
+  outline-color: currentColor;
+}
+
+.hf-tabs__panel {
+  padding-top: var(--s5);
+}
+
+.hf-tabs__panel:focus-visible {
+  outline-offset: 4px;
+}
+
+/* ------------------------------------------------------------------
+   Dialog
+------------------------------------------------------------------- */
+.hf-dialog {
+  --fg: var(--ink);
+  --bg: var(--paper);
+  margin: auto;
+  border: 0;
+  padding: 12px;
+  background: none;
+  color: var(--ink);
+  max-width: min(640px, calc(100vw - 16px));
+  max-height: calc(100dvh - 16px);
+  overflow: visible;
+}
+
+.hf-dialog::backdrop {
+  background: conic-gradient(var(--ink) 25%, #0000 0 50%, var(--ink) 0 75%, #0000 0) 0 0 / 8px 8px;
+}
+
+.hf-dialog__card {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - 40px);
+  background: var(--paper);
+  box-shadow:
+    0 0 0 4px var(--paper),
+    0 0 0 8px var(--ink),
+    0 0 0 12px var(--paper);
+}
+
+.hf-dialog__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  border-bottom: var(--rule) solid var(--ink);
+}
+
+.hf-dialog__title {
+  font: var(--px-2) var(--f-px);
+  font-weight: 420;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+}
+
+.hf-dialog__body {
+  padding: 16px;
+  overflow: auto;
+  font: var(--tx-m) var(--f-text);
+}
+
+.hf-dialog__body > * + * {
+  margin-top: 12px;
+}
+
+.hf-dialog__foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 16px 24px;
+  flex-wrap: wrap;
+  padding: 16px;
+  border-top: var(--rule-thin) solid var(--ink);
+}
+
+/* ------------------------------------------------------------------
+   Tooltip
+------------------------------------------------------------------- */
+.hf-tip {
+  position: relative;
+  display: inline-block;
+  cursor: help;
+}
+
+.hf-tip--marked {
+  background: linear-gradient(90deg, var(--fg) 50%, #0000 50%) 0 100% / 4px 2px repeat-x;
+  padding-bottom: 2px;
+}
+
+.hf-tip__bubble {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 20;
+  width: max-content;
+  max-width: min(320px, 70vw);
+  padding: 8px 12px 10px;
+  background: var(--fg);
+  color: var(--bg);
+  font: var(--tx-s) var(--f-text);
+  font-style: normal;
+  text-align: left;
+  white-space: normal;
+  box-shadow: 0 0 0 2px var(--bg);
+  visibility: hidden;
+}
+
+.hf-tip--end .hf-tip__bubble {
+  left: auto;
+  right: 0;
+}
+
+.hf-tip--below .hf-tip__bubble {
+  bottom: auto;
+  top: calc(100% + 8px);
+}
+
+.hf-tip:hover .hf-tip__bubble,
+.hf-tip:focus-visible .hf-tip__bubble,
+.hf-tip:focus-within .hf-tip__bubble {
+  visibility: visible;
+}
+
+/* ------------------------------------------------------------------
+   CopyButton
+------------------------------------------------------------------- */
+.hf-copy {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 12px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.hf-copy__value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.hf-copy__btn {
+  flex: none;
+  border: 0;
+  cursor: pointer;
+  font: var(--px-1) var(--f-px);
+  font-weight: 420;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+  line-height: 20px;
+  padding: 2px 8px 2px 6px;
+  color: var(--fg);
+  background: var(--bg);
+  box-shadow: inset 0 0 0 2px var(--fg);
+}
+
+.hf-copy__btn:hover,
+.hf-copy__btn[data-done='true'] {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+/* ------------------------------------------------------------------
+   Skeleton, Unavailable
+------------------------------------------------------------------- */
+.hf-skeleton {
+  display: block;
+  min-height: 24px;
+  background:
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 0 0 / 16px 16px,
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 8px 8px / 16px 16px;
+  animation: hf-drift 1.2s steps(4, end) infinite;
+}
+
+@keyframes hf-drift {
+  to {
+    background-position:
+      16px 0,
+      24px 8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hf-skeleton {
+    animation: none;
+  }
+}
+
+.hf-unavailable {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  border: var(--rule-thin) solid var(--fg);
+  background: var(--bg);
+  color: var(--fg);
+  min-width: 0;
+}
+
+.hf-unavailable__band {
+  border-right: var(--rule-thin) solid var(--fg);
+  background:
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 2px 2px / 16px 16px,
+    conic-gradient(from 270deg at 4px 4px, var(--fg) 90deg, #0000 0) 10px 10px / 16px 16px;
+}
+
+.hf-unavailable__main {
+  padding: 8px 12px 10px;
+  min-width: 0;
+}
+
+.hf-unavailable__word {
+  font: var(--px-1) var(--f-px);
+  font-weight: 420;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+}
+
+.hf-unavailable__reason {
+  font: var(--tx-s) var(--f-text);
+  overflow-wrap: anywhere;
+}
+
+.hf-unavailable__meta {
+  font: var(--tx-s) var(--f-text);
+  font-style: italic;
+}
+
+.hf-unavailable--inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: none;
+}
+
+/* ------------------------------------------------------------------
+   Timestamp
+------------------------------------------------------------------- */
+.hf-time__abs {
+  white-space: nowrap;
+  font-family: var(--f-num);
+  font-style: normal;
+  font-size: 0.82em;
+  font-variant-numeric: tabular-nums;
+}
+
+.hf-time__rel {
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------
+   ExternalTxLink
+------------------------------------------------------------------- */
+.hf-txlink {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  max-width: 100%;
+  color: var(--fg);
+  text-decoration: none;
+  padding-bottom: 3px;
+  background: linear-gradient(90deg, var(--fg) 50%, #0000 50%) 0 100% / 8px 2px repeat-x;
+}
+
+.hf-txlink:hover {
+  background-size: 8px 4px;
+}
+
+.hf-txlink__chain {
+  font: var(--px-1) var(--f-px);
+  font-weight: 420;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+  line-height: 20px;
+}
+
+.hf-txlink__id {
+  font: var(--num-m) var(--f-num);
+  font-variant-numeric: tabular-nums;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.hf-txlink svg {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  fill: currentColor;
+}
+
+/* ------------------------------------------------------------------
+   QrFrame
+------------------------------------------------------------------- */
+.hf-qr {
+  display: inline-flex;
+  flex-direction: column;
+  max-width: 100%;
+}
+
+/* A code is always ink on paper, whatever ground it stands on, so that it scans. */
+.hf-qr__plate {
+  background: var(--paper);
+  color: var(--ink);
+  padding: 4px;
+  box-shadow:
+    0 0 0 4px var(--ink),
+    0 0 0 8px var(--paper);
+  margin: 8px;
+}
+
+.hf-qr__plate svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.hf-qr__caption {
+  font: var(--tx-s) var(--f-text);
+  font-style: italic;
+  margin: 8px 8px 0;
+}
+
+/* ------------------------------------------------------------------
+   Charts
+------------------------------------------------------------------- */
+
+/* A picture is always an ink plate, on either ground. */
+.hf-plate {
+  position: relative;
+  background: var(--ink);
+  overflow: hidden;
+}
+
+.hf-plate--framed {
+  margin: 8px;
+  outline: var(--rule) solid var(--fg);
+  outline-offset: 4px;
+}
+
+.hf-chart {
+  display: block;
+  min-width: 0;
+}
+
+.hf-chart__plate {
+  height: 240px;
+}
+
+.hf-chart__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 28px;
+  margin: 16px 8px 0;
+  font: var(--tx-s) var(--f-text);
+  font-style: italic;
+}
+
+.hf-chart__legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.hf-chart__legend .hf-swatch {
+  width: 16px;
+  height: 16px;
+}
+
+.hf-chart__caption {
+  margin: 12px 8px 0;
+  font: var(--tx-s) var(--f-text);
+  font-style: italic;
+  max-width: 44em;
+}
+
+.hf-spark {
+  display: inline-block;
+  vertical-align: middle;
+  fill: currentColor;
+}
+
+.hf-bars {
+  display: grid;
+  row-gap: 4px;
+}
+
+.hf-bars__row {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr) 84px;
+  column-gap: 12px;
+  align-items: center;
+  font: var(--px-1) var(--f-px);
+  font-weight: 420;
+  font-variation-settings: 'ELSH' 50;
+  -webkit-font-smoothing: none;
+  line-height: 28px;
+}
+
+.hf-bars__track {
+  display: block;
+  height: 20px;
+  border-left: 4px solid var(--fg);
+}
+
+.hf-bars__fill {
+  display: block;
+  height: 20px;
+  min-width: 4px;
+  width: var(--share, 0%);
+}
+
+@supports (width: round(nearest, 1%, 4px)) {
+  .hf-bars__fill {
+    width: round(nearest, var(--share, 0%), 4px);
+  }
+}
+
+.hf-bars__fill[data-zero='true'] {
+  min-width: 0;
+}
+
+.hf-bars__value {
+  text-align: right;
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .hf-bars__row {
+    grid-template-columns: 86px minmax(0, 1fr) 78px;
+    column-gap: 8px;
+  }
+}
