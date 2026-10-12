@@ -38,8 +38,11 @@ describe('safety', () => {
       ['hl_agent', 'unavailable'],
       ['tempo_access', 'ok'],
       ['solana_delegate', 'ok'],
+      ['hl_attester', 'ok'],
     ]);
     expect(body.keys[2]).toMatchObject({ address: await keyAddress(w, org.id, 'tempo_access'), scope: { readAt: w.clock.ms, value: { authorized: true, remaining: '10000000', scope: { recipients: [...PAYEES] } } } });
+    // The attester key is listed with what the contract says of it now: the owner has not named it yet.
+    expect(body.keys[4]).toMatchObject({ address: await keyAddress(w, org.id, 'hl_attester'), chain: 'hyperliquid', scope: { source: 'hyperevm', readAt: w.clock.ms, value: { registered: false } } });
     expect(body.refusals).toEqual([
       { id: expect.any(String), chain: 'solana', kind: 'over_allowance', attempted: 'a transfer above the allowance', outcome: 'insufficient delegated amount', tx: '5sig', evidence: { failedOnChain: true }, createdAt: w.clock.ms, txUrl: 'https://explorer.solana.com/tx/5sig?cluster=devnet' },
     ]);

@@ -1,3 +1,4 @@
+import type { HedgeSnapshot, SeriesState } from '@holdfast/attest';
 import type { Bar, PayoutAllowance, PayoutLine, ReferencePrice, TreasuryScanner } from '@holdfast/core';
 import type { PgStore } from '@holdfast/db';
 import type { ApproveAgentAction, ExchangeReply, HyperliquidVenue, UserSignedRequest, WithdrawRefusalProbe } from '@holdfast/hyperliquid';
@@ -5,7 +6,7 @@ import type { OneClick } from '@holdfast/intents';
 import type { TempoChain, TempoNetwork, TempoPayoutRail } from '@holdfast/tempo';
 import type { UfvkCheck } from '@holdfast/zcash';
 import type { Address, Hex } from 'viem';
-import type { HoldfastNetwork, SolanaCluster } from './config';
+import type { HoldfastNetwork, SolanaCluster, ZecPerp } from './config';
 import type { Redactor } from './redact';
 
 /**
@@ -35,8 +36,68 @@ export interface Deps {
   oneClick: Pick<OneClick, 'quote' | 'status'>;
   tempo: TempoPort;
   solana: SolanaPort;
+  /** The HedgeAttestor contract. Null when this deployment records no attestations. */
+  attestor: AttestorPort | null;
   /** The hourly ZEC history the scenarios are graded on. */
   bars(): Promise<readonly Bar[]>;
+}
+
+/** What `attest` takes from whoever calls it. The position and the prices are not among it: the contract reads them. */
+export interface AttestationCall {
+  /** The organisation's Hyperliquid account, which the snapshot is recorded for. */
+  user: Address;
+  journalRoot: Hex;
+  journalCount: bigint;
+  treasuryCommitment: Hex;
+}
+
+/** The contract turning a call down: the error it reverts with, by name and written out with its values. */
+export interface ContractRefusal {
+  error: string;
+  text: string;
+}
+
+/** How the chain recorded an attestation that was sent. */
+export interface AttestationReceipt {
+  /** False when the chain included the transaction and it reverted. */
+  ok: boolean;
+  /** The snapshot the transaction recorded and the account it is for, as the contract's own event states them; null when it recorded none. */
+  recorded: { user: Address; snapshot: HedgeSnapshot } | null;
+}
+
+/** The HedgeAttestor contract on HyperEVM, as far as the application uses it. */
+export interface AttestorPort {
+  chainId: number;
+  contract: Address;
+  /** ZEC as the contract reads it on this chain. */
+  perp: ZecPerp;
+  /** The least time between two snapshots of one organisation, ms. */
+  everyMs: number;
+  /** The attester an account has named, or null when it has none. */
+  attesterOf(user: Address): Promise<Address | null>;
+  /** Where a series of an account stands: the one with this number, or the one new snapshots go into. */
+  series(user: Address, series: bigint | 'current'): Promise<SeriesState>;
+  /** One snapshot, or the most recent of its series. It rejects, as the contract does, when there is none. */
+  snapshot(user: Address, series: bigint, number: bigint | 'latest'): Promise<HedgeSnapshot>;
+  /** The contract's own answer to whether a leaf, with this proof, is under the journal root of a snapshot. */
+  verifyEntry(user: Address, series: bigint, number: bigint, leaf: Hex, proof: readonly Hex[]): Promise<boolean>;
+  /**
+   * What the contract would answer if `attester` sent this attestation now:
+   * its refusal, or null when it would record the snapshot. Nothing is sent.
+   * The node runs the call, because only the node has the HyperCore reads the
+   * contract makes.
+   */
+  refusalOf(attester: Address, call: AttestationCall): Promise<ContractRefusal | null>;
+  /**
+   * Sign an attestation with the attester's key. Nothing is sent: the hash
+   * the transaction will have is known first, so that it can be written down
+   * before the transaction leaves.
+   */
+  sign(attesterPrivateKey: Hex, call: AttestationCall): Promise<{ hash: Hex; raw: Hex }>;
+  /** Hand a signed transaction to the node. When this rejects, whether the node took it is not known. */
+  broadcast(raw: Hex): Promise<void>;
+  /** How the chain recorded a transaction, waiting up to `waitMs` for it to appear; null while the chain does not show it. */
+  receipt(hash: Hex, waitMs?: number): Promise<AttestationReceipt | null>;
 }
 
 export interface ZcashPort {

@@ -1,6 +1,10 @@
-import type { OrderRequest, PayoutAllowance, ReferencePrice } from '@holdfast/core';
+import type { HedgeSnapshot, SeriesState } from '@holdfast/attest';
+import { type OrderRequest, type PayoutAllowance, type ReferencePrice, ZERO_ROOT } from '@holdfast/core';
 import type { Fill, FundingPayment, HyperliquidState, HyperliquidVenue, PlaceResult } from '@holdfast/hyperliquid';
-import type { SolanaPayResult, SolanaPort, SolanaPreview, SolanaRail, SolanaRefusalProbe, SolanaRunInput, SolanaRunOnChain } from '../../src/server/deps';
+import { type Address, type Hex, isAddressEqual, keccak256, toHex } from 'viem';
+import { privateKeyToAddress } from 'viem/accounts';
+import { contractVerifies } from '../../../../packages/attest/test/support';
+import type { AttestationCall, AttestationReceipt, AttestorPort, ContractRefusal, SolanaPayResult, SolanaPort, SolanaPreview, SolanaRail, SolanaRefusalProbe, SolanaRunInput, SolanaRunOnChain } from '../../src/server/deps';
 
 export const PX = 1_223.3;
 
@@ -335,5 +339,217 @@ export class FakeSolana implements SolanaPort {
 
   txUrl(signature: string): string {
     return `https://explorer.solana.com/tx/${signature}?cluster=devnet`;
+  }
+}
+
+export const ATTESTOR_CONTRACT: Address = '0x00000000000000000000000000000000000a77e5';
+
+type StoredSnapshot = Omit<HedgeSnapshot, 'series' | 'number'>;
+
+/** A refusal written the way the real adapter writes one: the contract's error and its values. */
+const contractRefusal = (error: string, ...values: unknown[]): ContractRefusal => ({ error, text: `${error}(${values.map(String).join(', ')})` });
+
+/**
+ * The HedgeAttestor contract as the application sees it, in memory. Accounts
+ * name attesters, snapshots go into series under the contract's own rules,
+ * and the position and prices a snapshot records are the ones the test has
+ * set here, as the real contract records whatever HyperCore holds. Switches
+ * cover the ways a node or a transaction can let its sender down.
+ */
+export class FakeAttestor implements AttestorPort {
+  readonly chainId = 999;
+  readonly contract = ATTESTOR_CONTRACT;
+  readonly perp = { index: 214, szDecimals: 2 };
+  everyMs = 60 * 60_000;
+
+  /** What the contract reads from HyperCore when it records a snapshot. */
+  szi = -5n;
+  oraclePx = 12_233_000n;
+  markPx = 12_231_500n;
+  l1Block = 1_179_360_279n;
+
+  /** When set, every call that reaches the node fails with this message. */
+  down: string | null = null;
+  /** When set, the node turns a transaction away with this message, and nothing is sent. */
+  rejectSend: string | null = null;
+  /** When set, what the contract answers to every attestation, whatever its own rules would say: a HyperCore read that fails, for one. */
+  refuseWith: ContractRefusal | null = null;
+  /** What becomes of a transaction that is sent: included at once, held back until `mine`, or never seen again. */
+  inclusion: 'now' | 'held' | 'never' = 'now';
+  /** Every transaction the node took, in order. */
+  readonly sent: { hash: Hex; from: Address; call: AttestationCall }[] = [];
+  /** Every attestation the contract was asked about without sending it. */
+  readonly asked: AttestationCall[] = [];
+  private readonly attesters = new Map<string, Address>();
+  private readonly histories = new Map<string, StoredSnapshot[][]>();
+  private readonly endedAt = new Map<string, bigint[]>();
+  private readonly receipts = new Map<Hex, AttestationReceipt>();
+  private readonly signed = new Map<Hex, { hash: Hex; from: Address; call: AttestationCall }>();
+  private signatures = 0;
+  private held: { hash: Hex; from: Address; call: AttestationCall }[] = [];
+
+  constructor(private readonly now: () => number) {}
+
+  private guard(): void {
+    if (this.down !== null) throw new Error(this.down);
+  }
+
+  private timestamp(): bigint {
+    return BigInt(Math.floor(this.now() / 1000));
+  }
+
+  /** Every series of an account, the last being the current one. An account that never attested has one empty series. */
+  private seriesOf(user: Address): StoredSnapshot[][] {
+    const key = user.toLowerCase();
+    let history = this.histories.get(key);
+    if (history === undefined) {
+      history = [[]];
+      this.histories.set(key, history);
+    }
+    return history;
+  }
+
+  private history(user: Address, series: bigint): StoredSnapshot[] {
+    const history = this.seriesOf(user)[Number(series)];
+    if (history === undefined) throw new Error(`the contract answered ${contractRefusal('UnknownSeries', user, series).text}`);
+    return history;
+  }
+
+  /** The contract's own checks on an attestation, in the contract's order. */
+  private refusal(from: Address, call: AttestationCall): ContractRefusal | null {
+    if (this.refuseWith !== null) return this.refuseWith;
+    const attester = this.attesters.get(call.user.toLowerCase());
+    if (attester === undefined || !isAddressEqual(attester, from)) return contractRefusal('NotAttester', call.user, from);
+    if ((call.journalCount === 0n) !== (call.journalRoot === ZERO_ROOT)) return contractRefusal('JournalRootCountMismatch', call.journalRoot, call.journalCount);
+    const previous = this.seriesOf(call.user).at(-1)?.at(-1);
+    if (previous !== undefined) {
+      if (call.journalCount < previous.journalCount) return contractRefusal('JournalShrank', previous.journalCount, call.journalCount);
+      if (call.journalCount === previous.journalCount && call.journalRoot !== previous.journalRoot) return contractRefusal('JournalRewritten', previous.journalRoot, call.journalRoot);
+    }
+    return null;
+  }
+
+  private include(tx: { hash: Hex; from: Address; call: AttestationCall }): void {
+    const { call } = tx;
+    if (this.refusal(tx.from, call) !== null) {
+      this.receipts.set(tx.hash, { ok: false, recorded: null });
+      return;
+    }
+    const all = this.seriesOf(call.user);
+    const number = this.put(call.user, { journalCount: call.journalCount, journalRoot: call.journalRoot, treasuryCommitment: call.treasuryCommitment });
+    const series = BigInt(all.length - 1);
+    const stored = all[all.length - 1]?.[Number(number)] as StoredSnapshot;
+    this.receipts.set(tx.hash, { ok: true, recorded: { user: call.user, snapshot: { series, number, ...stored } } });
+  }
+
+  /** `setAttester`, as the account itself would send it. */
+  name(user: string, attester: string): void {
+    this.attesters.set(user.toLowerCase(), attester as Address);
+  }
+
+  /** `startSeries`, as the account itself would send it. */
+  startSeries(user: string): void {
+    const all = this.seriesOf(user as Address);
+    const ended = this.endedAt.get(user.toLowerCase()) ?? [];
+    ended[all.length - 1] = this.timestamp();
+    this.endedAt.set(user.toLowerCase(), ended);
+    all.push([]);
+  }
+
+  /** Put a snapshot into the current series without asking the contract's rules, and say what number it got. */
+  put(user: string, over: Partial<StoredSnapshot>): bigint {
+    const current = this.seriesOf(user as Address).at(-1) as StoredSnapshot[];
+    this.l1Block += 600n;
+    current.push({
+      perpIndex: this.perp.index,
+      szi: this.szi,
+      oraclePx: this.oraclePx,
+      markPx: this.markPx,
+      l1BlockNumber: this.l1Block,
+      timestamp: this.timestamp(),
+      journalCount: 0n,
+      journalRoot: ZERO_ROOT,
+      treasuryCommitment: ZERO_ROOT,
+      ...over,
+    });
+    return BigInt(current.length - 1);
+  }
+
+  /** Include every transaction that was held back. */
+  mine(): void {
+    const waiting = this.held;
+    this.held = [];
+    for (const tx of waiting) this.include(tx);
+  }
+
+  /** The snapshots of an account's current series, oldest first. */
+  snapshots(user: string): StoredSnapshot[] {
+    return [...(this.seriesOf(user as Address).at(-1) ?? [])];
+  }
+
+  async attesterOf(user: Address): Promise<Address | null> {
+    this.guard();
+    return this.attesters.get(user.toLowerCase()) ?? null;
+  }
+
+  async series(user: Address, series: bigint | 'current'): Promise<SeriesState> {
+    this.guard();
+    const all = this.seriesOf(user);
+    const current = BigInt(all.length - 1);
+    const number = series === 'current' ? current : series;
+    const snapshotCount = BigInt(this.history(user, number).length);
+    const endedAt = number === current ? null : (this.endedAt.get(user.toLowerCase())?.[Number(number)] ?? null);
+    return { series: number, snapshotCount, current: number === current, endedAt };
+  }
+
+  async snapshot(user: Address, series: bigint, number: bigint | 'latest'): Promise<HedgeSnapshot> {
+    this.guard();
+    const history = this.history(user, series);
+    if (number === 'latest' && history.length === 0) throw new Error(`the contract answered ${contractRefusal('NoSnapshots', user, series).text}`);
+    const at = number === 'latest' ? BigInt(history.length - 1) : number;
+    const stored = history[Number(at)];
+    if (stored === undefined) throw new Error(`the contract answered ${contractRefusal('UnknownSnapshot', user, series, at).text}`);
+    return { series, number: at, ...stored };
+  }
+
+  async verifyEntry(user: Address, series: bigint, number: bigint, leaf: Hex, proof: readonly Hex[]): Promise<boolean> {
+    const snapshot = await this.snapshot(user, series, number);
+    return contractVerifies(snapshot.journalRoot, snapshot.journalCount, leaf, proof);
+  }
+
+  async refusalOf(attester: Address, call: AttestationCall): Promise<ContractRefusal | null> {
+    this.guard();
+    this.asked.push(call);
+    return this.refusal(attester, call);
+  }
+
+  async sign(attesterPrivateKey: Hex, call: AttestationCall): Promise<{ hash: Hex; raw: Hex }> {
+    this.guard();
+    const raw = toHex(`attestation ${++this.signatures}`);
+    const tx = { hash: keccak256(raw), from: privateKeyToAddress(attesterPrivateKey), call };
+    this.signed.set(raw, tx);
+    return { hash: tx.hash, raw };
+  }
+
+  async broadcast(raw: Hex): Promise<void> {
+    this.guard();
+    if (this.rejectSend !== null) throw new Error(`sending the attestation failed: ${this.rejectSend}`);
+    const tx = this.signed.get(raw);
+    if (tx === undefined) throw new Error('sending the attestation failed: the node could not decode the transaction');
+    this.sent.push(tx);
+    if (this.inclusion === 'now') this.include(tx);
+    if (this.inclusion === 'held') this.held.push(tx);
+  }
+
+  /** Sign and send in one go, as an attester outside the application would: for snapshots a test needs on chain beforehand. */
+  async send(attesterPrivateKey: Hex, call: AttestationCall): Promise<Hex> {
+    const { hash, raw } = await this.sign(attesterPrivateKey, call);
+    await this.broadcast(raw);
+    return hash;
+  }
+
+  async receipt(hash: Hex): Promise<AttestationReceipt | null> {
+    this.guard();
+    return this.receipts.get(hash) ?? null;
   }
 }

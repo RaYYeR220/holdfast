@@ -27,7 +27,8 @@
  *     "keys": {                            each optional; a key that is given becomes the organisation's active one
  *       "hyperliquidAgent": "0x…",         32-byte private key of the approved agent
  *       "tempoAccessKey": "0x…",           32-byte P-256 private key of the authorized access key
- *       "solanaDelegate": [12, 34, …]      the key file the Solana tools write (64 bytes), or its hex, or the hex of the 32-byte seed
+ *       "solanaDelegate": [12, 34, …],     the key file the Solana tools write (64 bytes), or its hex, or the hex of the 32-byte seed
+ *       "hedgeAttester": "0x…"             32-byte private key of the attester the owner named on the HedgeAttestor contract
  *     },
  *     "payoutRuns": [                      runs already paid on chain
  *       {
@@ -43,6 +44,17 @@
  *     "refusals": [                        transactions the chain refused
  *       { "chain": "tempo", "kind": "over_limit", "tx": "0x…", "attempted": "transferWithMemo of the largest amount there is" },
  *       { "chain": "solana", "kind": "over_allowance", "tx": "…", "attempted": "a transfer of one base unit more than the allowance" }
+ *     ],
+ *     "attestations": [                    snapshots the HedgeAttestor contract already holds for the owner's account
+ *       {
+ *         "series": 0,                     the series the snapshot is in, and its number there; both count from zero
+ *         "number": 0,
+ *         "tx": "0x…",                     the transaction that recorded it
+ *         "journalCount": 12,              how many journal entries it commits to
+ *         "root": "0x…",                   and their Merkle root
+ *         "treasuryZat": "5000000",        the balance its treasury commitment hides, in zatoshi
+ *         "salt": "0x…"                    and the 32-byte salt that hides it
+ *       }
  *     ]
  *   }
  *
@@ -51,9 +63,12 @@
  *
  * A run is recorded only if its chain holds it under its id, in the named
  * transaction, with these payees and amounts; a refusal only if its chain
- * recorded the transaction as failed. Whatever cannot be confirmed is left
- * out and reported, and the exit code is 1. Running the script again records
- * nothing a second time.
+ * recorded the transaction as failed; an attestation only if the contract
+ * holds that snapshot with this journal root and count, the balance and salt
+ * open its treasury commitment, and the named transaction recorded it.
+ * Attestations need HEDGE_ATTESTOR_ADDRESS set and the network to be mainnet.
+ * Whatever cannot be confirmed is left out and reported, and the exit code is
+ * 1. Running the script again records nothing a second time.
  */
 import { readFile } from 'node:fs/promises';
 import { createRuntime } from '../src/server/runtime';

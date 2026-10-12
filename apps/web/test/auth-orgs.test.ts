@@ -1,7 +1,8 @@
 import { DEFAULT_POLICY } from '@holdfast/core';
 import type { PgliteConnection } from '@holdfast/db';
 import { testDeriveKeys } from '@ledgerhq/zcash-utils';
-import { getAddress } from 'viem';
+import { type Hex, getAddress } from 'viem';
+import { privateKeyToAddress } from 'viem/accounts';
 import { createSiweMessage } from 'viem/siwe';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { getMe, getNonce, postLogout, postVerify } from '../src/server/api/auth';
@@ -188,20 +189,25 @@ describe('organisations', () => {
         { kind: 'hl_agent', address: expect.stringMatching(/^0x[0-9a-f]{40}$/) },
         { kind: 'tempo_access', address: expect.stringMatching(/^0x[0-9a-fA-F]{40}$/) },
         { kind: 'solana_delegate', address: expect.stringMatching(/^De1egate/) },
+        { kind: 'hl_attester', address: expect.stringMatching(/^0x[0-9a-f]{40}$/) },
       ],
     });
 
     const { id } = answer.body;
     expect((await w.store.loadOrg(id)).ufvk).toBe(UFVK);
     expect(answer.text).not.toContain(UFVK);
-    for (const kind of ['hl_agent', 'tempo_access', 'solana_delegate'] as const) {
+    for (const kind of ['hl_agent', 'tempo_access', 'solana_delegate', 'hl_attester'] as const) {
       const key = await w.store.activeKey(id, kind);
       expect(key?.secret.length).toBeGreaterThan(30);
       expect(answer.text).not.toContain(key?.secret);
     }
     const stored = await connection.client.query<{ secret_enc: string }>('select secret_enc from holdfast.keys where org_id = $1', [id]);
-    expect(stored.rows).toHaveLength(3);
+    expect(stored.rows).toHaveLength(4);
     for (const row of stored.rows) expect(row.secret_enc).toMatch(/^v1\./);
+
+    // The attester is an ordinary account: its address is the one its key signs as, and nothing but the address is shown.
+    const attester = await w.store.activeKey(id, 'hl_attester');
+    expect(privateKeyToAddress(attester?.secret as Hex).toLowerCase()).toBe(answer.body.serviceKeys[3].address);
   });
 
   it('give each organisation keys of its own', async () => {
@@ -209,7 +215,7 @@ describe('organisations', () => {
     const cookie = await sessionOf(w, owner.address);
     const first = (await call(w, postOrg, 'POST', { cookie, body: input })).body;
     const second = (await call(w, postOrg, 'POST', { cookie, body: { ...input, name: 'Second' } })).body;
-    for (const index of [0, 1, 2]) expect(first.serviceKeys[index].address).not.toBe(second.serviceKeys[index].address);
+    for (const index of [0, 1, 2, 3]) expect(first.serviceKeys[index].address).not.toBe(second.serviceKeys[index].address);
 
     const mine = await call(w, getOrgs, 'GET', { cookie });
     // Two organisations made in the same instant are listed in the order of their ids, so only membership is asserted.

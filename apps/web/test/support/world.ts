@@ -19,7 +19,7 @@ import type { Deps } from '../../src/server/deps';
 import type { Endpoint } from '../../src/server/http/endpoint';
 import { createOrganisation } from '../../src/server/orgs/service';
 import { createRedactor } from '../../src/server/redact';
-import { FakeOneClick, FakeReference, FakeSolana, FakeVenue, SOLANA_OWNER } from './fakes';
+import { FakeAttestor, FakeOneClick, FakeReference, FakeSolana, FakeVenue, SOLANA_OWNER } from './fakes';
 
 export { STARTUP_TIMEOUT_MS, migratedPglite } from '../../../../packages/db/test/support/stores';
 export { BIRTHDAY, note } from '../../../../packages/db/test/support/fakes';
@@ -58,6 +58,8 @@ export interface World {
   /** The Tempo chain as each access key sees it, made on first use. */
   tempoChain(accessKey: string): FakeChain;
   solana: FakeSolana;
+  /** The HedgeAttestor contract and its chain. A test of a deployment without one sets `deps.attestor` to null. */
+  attestor: FakeAttestor;
   /** What was written to the error log. */
   reported: string[];
 }
@@ -71,6 +73,7 @@ export function world(connection: PgliteConnection): World {
   const reference = new FakeReference(clock.now);
   const oneClick = new FakeOneClick();
   const solana = new FakeSolana();
+  const attestor = new FakeAttestor(clock.now);
   const reported: string[] = [];
 
   const exchange: World['exchange'] = { calls: [], answer: () => ({ status: 'ok', response: { type: 'default' } }) };
@@ -114,10 +117,11 @@ export function world(connection: PgliteConnection): World {
       clock: () => (railClock += 1_000),
     })),
     solana,
+    attestor,
     bars: async () => BARS,
   };
 
-  return { deps, clock, store, chain, venue, exchange, reference, oneClick, tempoChain, solana, reported };
+  return { deps, clock, store, chain, venue, exchange, reference, oneClick, tempoChain, solana, attestor, reported };
 }
 
 /** An organisation the way the application creates one, owned by `owner`, with both payout accounts set. */
@@ -144,7 +148,7 @@ export async function tickOnce(w: World, orgId: string): Promise<JournalEntry> {
 }
 
 /** The address of one of an organisation's service keys. */
-export async function keyAddress(w: World, orgId: string, kind: 'hl_agent' | 'tempo_access' | 'solana_delegate'): Promise<string> {
+export async function keyAddress(w: World, orgId: string, kind: 'hl_agent' | 'tempo_access' | 'solana_delegate' | 'hl_attester'): Promise<string> {
   const key = await w.store.activeKey(orgId, kind);
   if (key === null) throw new Error(`the organisation has no ${kind} key`);
   return key.address;

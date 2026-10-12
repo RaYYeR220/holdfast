@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { readConfig } from '../src/server/config';
+import { ZEC_PERP, readConfig } from '../src/server/config';
 import { ConfigError } from '../src/server/errors';
 import { createRedactor } from '../src/server/redact';
 import { createRuntime } from '../src/server/runtime';
@@ -128,8 +128,55 @@ describe('configuration', () => {
   });
 
   it('lists what must never be shown, whether or not it is well formed', () => {
-    const config = readConfig({ ...VALID, TICK_SECRET: 'short', SOLANA_RPC_URL: 'https://rpc.example.test/v2/rpc-key', ONECLICK_API_KEY: 'partner-key' });
-    expect(config.secrets().sort()).toEqual([VALID.DATABASE_URL, VALID.HOLDFAST_MASTER_KEY, 'short', VALID.SESSION_SECRET, VALID.TEMPO_SPONSOR_PRIVATE_KEY, 'partner-key', 'https://rpc.example.test/v2/rpc-key'].sort());
+    const config = readConfig({ ...VALID, TICK_SECRET: 'short', SOLANA_RPC_URL: 'https://rpc.example.test/v2/rpc-key', ONECLICK_API_KEY: 'partner-key', HYPEREVM_RPC_URL: 'https://rpc.example.test/evm/rpc-key' });
+    expect(config.secrets().sort()).toEqual(
+      [VALID.DATABASE_URL, VALID.HOLDFAST_MASTER_KEY, 'short', VALID.SESSION_SECRET, VALID.TEMPO_SPONSOR_PRIVATE_KEY, 'partner-key', 'https://rpc.example.test/v2/rpc-key', 'https://rpc.example.test/evm/rpc-key'].sort(),
+    );
+  });
+
+  describe('of the attestations', () => {
+    const CONTRACT = '0xa6afa5c68146bbd4c49510987847c7c38837824e';
+
+    it('records none unless a contract is named, and then needs nothing else', () => {
+      expect(readConfig(VALID).attestor()).toBeNull();
+      expect(readConfig({ ...VALID, HEDGE_ATTESTOR_ADDRESS: '  ' }).attestor()).toBeNull();
+      // Without a contract the other two are not even looked at, and neither is the network.
+      expect(readConfig({ HYPEREVM_RPC_URL: 'not a url', ATTEST_EVERY_MINUTES: 'often' }).attestor()).toBeNull();
+
+      expect(readConfig({ ...VALID, HEDGE_ATTESTOR_ADDRESS: CONTRACT }).attestor()).toEqual({
+        chainId: 999,
+        rpcUrl: 'https://rpc.hyperliquid.xyz/evm',
+        contract: '0xa6aFA5c68146BbD4C49510987847C7C38837824E',
+        perp: { index: 214, szDecimals: 2 },
+        everyMinutes: 60,
+      });
+    });
+
+    it('takes another endpoint and another interval', () => {
+      const config = readConfig({ ...VALID, HEDGE_ATTESTOR_ADDRESS: CONTRACT, HYPEREVM_RPC_URL: 'https://rpc.example.test/evm', ATTEST_EVERY_MINUTES: '5' });
+      expect(config.attestor()).toMatchObject({ rpcUrl: 'https://rpc.example.test/evm', everyMinutes: 5 });
+    });
+
+    it('records none on testnet, where the contract is not deployed', () => {
+      expect(readConfig({ ...VALID, HOLDFAST_NETWORK: 'testnet', HEDGE_ATTESTOR_ADDRESS: CONTRACT }).attestor()).toBeNull();
+      expect(ZEC_PERP).toEqual({ mainnet: { index: 214, szDecimals: 2 }, testnet: { index: 193, szDecimals: 0 } });
+    });
+
+    it('names the variable that is malformed, and never repeats its value', () => {
+      const cases: [Record<string, string>, string][] = [
+        [{ HEDGE_ATTESTOR_ADDRESS: '0xa6afa5c68146bbd4c49510987847c7c3883782' }, 'HEDGE_ATTESTOR_ADDRESS is not a contract address'],
+        [{ HEDGE_ATTESTOR_ADDRESS: '0xA6AFA5c68146bbd4c49510987847c7c38837824e' }, 'HEDGE_ATTESTOR_ADDRESS is not a contract address'],
+        [{ HEDGE_ATTESTOR_ADDRESS: CONTRACT, HYPEREVM_RPC_URL: 'wss://rpc.example.test/evm/rpc-key' }, 'HYPEREVM_RPC_URL must be a https:// or http:// URL'],
+        [{ HEDGE_ATTESTOR_ADDRESS: CONTRACT, ATTEST_EVERY_MINUTES: '4' }, 'ATTEST_EVERY_MINUTES must be a whole number of minutes, at least 5'],
+        [{ HEDGE_ATTESTOR_ADDRESS: CONTRACT, ATTEST_EVERY_MINUTES: '7.5' }, 'ATTEST_EVERY_MINUTES must be a whole number of minutes, at least 5'],
+        [{ HEDGE_ATTESTOR_ADDRESS: CONTRACT, ATTEST_EVERY_MINUTES: 'hourly' }, 'ATTEST_EVERY_MINUTES must be a whole number of minutes, at least 5'],
+      ];
+      for (const [over, message] of cases) {
+        const error = failure(() => readConfig({ ...VALID, ...over }).attestor());
+        expect(error.message).toBe(message);
+        for (const value of Object.values(over)) if (value.length > 6) expect(error.message).not.toContain(value);
+      }
+    });
   });
 
   it('has every variable it reads written down in .env.example, with no value', () => {
@@ -138,10 +185,13 @@ describe('configuration', () => {
     expect(assignments.every((line) => line.endsWith('='))).toBe(true);
     expect(assignments.map((line) => line.slice(0, -1)).sort()).toEqual(
       [
+        'ATTEST_EVERY_MINUTES',
         'DATABASE_URL',
+        'HEDGE_ATTESTOR_ADDRESS',
         'HOLDFAST_MASTER_KEY',
         'HOLDFAST_NETWORK',
         'HOLDFAST_PUBLIC_HOST',
+        'HYPEREVM_RPC_URL',
         'ONECLICK_API_KEY',
         'SESSION_SECRET',
         'SOLANA_CLUSTER',
@@ -171,6 +221,14 @@ describe('the runtime', () => {
     // The Tempo rail is described without the sponsor key; making one needs it.
     expect(deps.tempo.tokenSymbol).toBe('USDC.e');
     expect(failure(() => deps.tempo.rail(`0x${'11'.repeat(32)}`)).message).toBe('TEMPO_SPONSOR_PRIVATE_KEY is not set');
+  });
+
+  it('has no attestor unless a contract is named, and builds one without touching the network when it is', () => {
+    expect(createRuntime({ HOLDFAST_NETWORK: 'mainnet' }).attestor).toBeNull();
+    expect(createRuntime({}).attestor).toBeNull();
+    const attestor = createRuntime({ HOLDFAST_NETWORK: 'mainnet', HEDGE_ATTESTOR_ADDRESS: '0xa6afa5c68146bbd4c49510987847c7c38837824e', ATTEST_EVERY_MINUTES: '15' }).attestor;
+    expect(attestor).toMatchObject({ chainId: 999, contract: '0xa6aFA5c68146BbD4C49510987847C7C38837824E', perp: { index: 214, szDecimals: 2 }, everyMs: 15 * 60_000 });
+    expect(failure(() => createRuntime({ HOLDFAST_NETWORK: 'mainnet', HEDGE_ATTESTOR_ADDRESS: 'nowhere' }).attestor).message).toBe('HEDGE_ATTESTOR_ADDRESS is not a contract address');
   });
 
   it('serves the market data without any setting at all', async () => {

@@ -1,9 +1,10 @@
+import { commitTreasury } from '@holdfast/attest';
 import type { PgliteConnection } from '@holdfast/db';
 import { lineMemo } from '@holdfast/tempo';
-import type { Hex } from 'viem';
+import { type Hex, getAddress } from 'viem';
 import { generatePrivateKey, privateKeyToAddress } from 'viem/accounts';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { getDemoPayouts, getDemoSafety } from '../src/server/api/public';
+import { getDemoAttestations, getDemoPayouts, getDemoSafety } from '../src/server/api/public';
 import { describeReport, parseSeed, seedDemo } from '../src/server/seed/demo';
 import { SOLANA_OWNER, SOLANA_PAYEES } from './support/fakes';
 import { PAYEES, ROOT, RPC_URL, STARTUP_TIMEOUT_MS, UFVK, type World, call, migratedPglite, newAccount, world } from './support/world';
@@ -216,13 +217,22 @@ describe('the demo seed', () => {
 
   it('refuses a file that is not a seed, without repeating what is in it', () => {
     const valid = { org: { id: 'x', name: 'X', owner: newAccount().address, ufvk: UFVK, birthday: 1 }, keys: {} };
-    expect(parseSeed(JSON.stringify(valid))).toMatchObject({ payoutRuns: [], refusals: [], org: { tempoAccount: null, monthlyBurnUsd: null } });
+    expect(parseSeed(JSON.stringify(valid))).toMatchObject({ payoutRuns: [], refusals: [], attestations: [], org: { tempoAccount: null, monthlyBurnUsd: null } });
     expect(() => parseSeed('{')).toThrow('the seed file is not valid JSON');
+    const salt = `0x${'5e'.repeat(32)}`;
+    const attestation = { series: 0, number: 0, tx: `0x${'a7'.repeat(32)}`, journalCount: 3, root: `0x${'a1'.repeat(32)}`, treasuryZat: '5000000', salt };
+    expect(parseSeed(JSON.stringify({ ...valid, attestations: [attestation] })).attestations).toEqual([{ ...attestation, series: 0n, number: 0n, journalCount: 3n, treasuryZat: 5_000_000n }]);
     const cases: [unknown, string][] = [
       [{ ...valid, org: { ...valid.org, owner: 'nobody' } }, 'org.owner: is not an account address'],
       [{ ...valid, keys: { hyperliquidAgent: '0x1234' } }, 'keys.hyperliquidAgent'],
       [{ ...valid, keys: { solanaDelegate: [1, 2, 3] } }, 'keys.solanaDelegate'],
+      [{ ...valid, keys: { hedgeAttester: `${salt}00` } }, 'keys.hedgeAttester'],
       [{ ...valid, payoutRuns: [{ id: 'october', chain: 'tempo', tx: '0x1', createdAt: '2026-10-09T14:00:00Z', paidAt: '2026-10-09T14:03:00Z', lines: [] }] }, 'payoutRuns.0.id: is not a run id of the form HF-YYYY-MM-NNNN'],
+      [{ ...valid, attestations: [{ ...attestation, salt: `${salt}5e` }] }, 'attestations.0.salt'],
+      [{ ...valid, attestations: [{ ...attestation, series: -1 }] }, 'attestations.0.series'],
+      [{ ...valid, attestations: [{ ...attestation, treasuryZat: 5_000_000 }] }, 'attestations.0.treasuryZat'],
+      [{ ...valid, attestations: [{ ...attestation, root: '0xa1' }] }, 'attestations.0.root'],
+      [{ ...valid, attestations: [{ ...attestation, balance: '1' }] }, 'attestations.0'],
       [{ ...valid, extra: true }, 'the file'],
     ];
     for (const [file, where] of cases) {
@@ -234,6 +244,7 @@ describe('the demo seed', () => {
       }
       expect(message).toContain(where);
       expect(message).not.toContain(UFVK);
+      expect(message).not.toContain(salt);
     }
   });
 
@@ -242,5 +253,133 @@ describe('the demo seed', () => {
     const spending = parseSeed(JSON.stringify({ ...seed, org: { ...seed.org, ufvk: 'secret-extended-key-main1qqqqqqqq' } }));
     await expect(seedDemo(w.deps, spending)).rejects.toThrow('the viewing key was not accepted');
     expect(await w.store.findOrg(seed.org.id)).toBeNull();
+  });
+});
+
+describe('the demo seed, for an account whose hedge is already attested', () => {
+  const HOUR = 60 * 60_000;
+  const SALTS: [Hex, Hex] = [`0x${'51'.repeat(32)}`, `0x${'52'.repeat(32)}`];
+  const ROOTS: [Hex, Hex] = [`0x${'a1'.repeat(32)}`, `0x${'a2'.repeat(32)}`];
+
+  /**
+   * An account that named an attester and had two snapshots recorded, an hour
+   * apart, before the application heard of it. Returns the seed file that
+   * describes it.
+   */
+  async function attestedOnChain() {
+    const owner = newAccount();
+    const attesterKey = generatePrivateKey();
+    const attester = privateKeyToAddress(attesterKey);
+    const user = getAddress(owner.address);
+    w.attestor.name(user, attester);
+
+    const recordedAt = w.clock.ms;
+    const first = await w.attestor.send(attesterKey, { user, journalRoot: ROOTS[0], journalCount: 3n, treasuryCommitment: commitTreasury(5_000_000n, SALTS[0]) });
+    w.clock.advance(HOUR);
+    const second = await w.attestor.send(attesterKey, { user, journalRoot: ROOTS[1], journalCount: 7n, treasuryCommitment: commitTreasury(7_250_000n, SALTS[1]) });
+    w.clock.advance(HOUR);
+    // A transaction the contract turned away: sent by a key the account never named.
+    const reverted = await w.attestor.send(generatePrivateKey(), { user, journalRoot: ROOTS[1], journalCount: 9n, treasuryCommitment: commitTreasury(1n, SALTS[1]) });
+
+    const attestations = [
+      { series: 0, number: 0, tx: first, journalCount: 3, root: ROOTS[0], treasuryZat: '5000000', salt: SALTS[0] },
+      { series: 0, number: 1, tx: second, journalCount: 7, root: ROOTS[1].toUpperCase().replace('0X', '0x'), treasuryZat: '7250000', salt: SALTS[1] },
+    ] as const;
+    const seed = { org: { id: `attested-${++orgs}`, name: 'Holdfast Demo', owner: owner.address, ufvk: UFVK, birthday: 3_512_000 }, keys: { hedgeAttester: attesterKey }, attestations: [...attestations] };
+    return { seed, attestations, owner, attesterKey, attester, txs: [first, second] as const, reverted, recordedAt };
+  }
+
+  it('registers the attester key and every snapshot the chain confirms, with what opens its commitment', async () => {
+    const { seed, attesterKey, attester, txs, recordedAt } = await attestedOnChain();
+    const report = await seedDemo(w.deps, parseSeed(JSON.stringify(seed)));
+    const id = seed.org.id;
+
+    expect(report.complete).toBe(true);
+    expect(results(report)).toEqual([`recorded organisation ${id}`, 'recorded hl_attester key', 'recorded attestation 0 of series 0', 'recorded attestation 1 of series 0']);
+    expect(await w.store.activeKey(id, 'hl_attester')).toEqual({ address: attester.toLowerCase(), secret: attesterKey });
+
+    // The time on record is the chain's own for each snapshot, not the moment the file was read.
+    expect(await w.store.listAttestations(id)).toEqual([
+      { id: expect.any(String), orgId: id, series: 0n, number: 1n, tx: txs[1], journalCount: 7n, journalRoot: ROOTS[1], commitment: commitTreasury(7_250_000n, SALTS[1]), sentAt: recordedAt + HOUR, status: 'confirmed', detail: null },
+      { id: expect.any(String), orgId: id, series: 0n, number: 0n, tx: txs[0], journalCount: 3n, journalRoot: ROOTS[0], commitment: commitTreasury(5_000_000n, SALTS[0]), sentAt: recordedAt, status: 'confirmed', detail: null },
+    ]);
+    expect(await w.store.openAttestation(id, 0n, 1n)).toEqual({ zat: 7_250_000n, salt: SALTS[1], commitment: commitTreasury(7_250_000n, SALTS[1]) });
+
+    // What was seeded is what the public demo then shows, each snapshot with its transaction.
+    const { body } = await call(w, getDemoAttestations, 'GET', { params: { orgId: id } });
+    expect(body).toMatchObject({ attester: attester.toLowerCase(), snapshots: { status: 'ok', value: { series: '0', snapshotCount: '2', items: [{ number: '1', tx: txs[1], journalCount: '7' }, { number: '0', tx: txs[0], journalCount: '3' }] } } });
+  });
+
+  it('records nothing a second time, and adds to an organisation that is already registered', async () => {
+    const { seed } = await attestedOnChain();
+    const { attestations: _later, keys: _keys, ...rest } = seed;
+    const before = await seedDemo(w.deps, parseSeed(JSON.stringify({ ...rest, keys: {} })));
+    expect(results(before)).toEqual([`recorded organisation ${seed.org.id}`]);
+
+    const parsed = parseSeed(JSON.stringify(seed));
+    expect(results(await seedDemo(w.deps, parsed))).toEqual([`kept organisation ${seed.org.id}`, 'recorded hl_attester key', 'recorded attestation 0 of series 0', 'recorded attestation 1 of series 0']);
+    const again = await seedDemo(w.deps, parsed);
+    expect(again.complete).toBe(true);
+    expect(again.items.map((item) => item.result)).toEqual(['kept', 'kept', 'kept', 'kept']);
+    expect(await w.store.listAttestations(seed.org.id)).toHaveLength(2);
+    expect(await w.store.listKeys(seed.org.id)).toHaveLength(1);
+  });
+
+  it('leaves out every snapshot the chain does not confirm exactly, and says what is wrong with each', async () => {
+    const { seed, attestations, txs, reverted } = await attestedOnChain();
+    const [first, second] = attestations;
+    const doubtful = {
+      ...seed,
+      attestations: [
+        { ...first, salt: SALTS[1] },
+        { ...first, treasuryZat: '5000001' },
+        { ...first, root: ROOTS[1] },
+        { ...first, journalCount: 4 },
+        { ...first, tx: txs[1] },
+        { ...first, tx: reverted },
+        { ...first, tx: `0x${'dd'.repeat(32)}` },
+        { ...second, number: 5 },
+        { ...second, series: 2 },
+      ],
+    };
+    const report = await seedDemo(w.deps, parseSeed(JSON.stringify(doubtful)));
+    expect(report.complete).toBe(false);
+    expect(report.items.filter((item) => item.result === 'skipped').map((item) => item.detail)).toEqual([
+      'the balance and the salt do not open the treasury commitment the chain holds',
+      'the balance and the salt do not open the treasury commitment the chain holds',
+      'the journal root is not the one the chain holds',
+      'the chain holds a snapshot of 3 journal entries, the file one of 4',
+      'the transaction recorded another snapshot than the one the file names',
+      'the transaction recorded no snapshot',
+      'the chain has no such transaction',
+      'series 0 holds 2 snapshot(s) on chain, so none with this number',
+      'the chain holds no series 2 for this account',
+    ]);
+    expect(await w.store.listAttestations(seed.org.id)).toEqual([]);
+    expect(describeReport(report)).toContain('! attestation 5 of series 0: NOT recorded, series 0 holds 2 snapshot(s) on chain, so none with this number');
+  });
+
+  it('records none while the chain cannot be read or where no attestations are recorded, and prints no key, salt or endpoint', async () => {
+    const { seed, attesterKey } = await attestedOnChain();
+    const parsed = parseSeed(JSON.stringify(seed));
+    w.attestor.down = `POST ${RPC_URL} timed out`;
+    const blind = await seedDemo(w.deps, parsed);
+    expect(blind.complete).toBe(false);
+    expect(await w.store.listAttestations(seed.org.id)).toEqual([]);
+    const printed = describeReport(blind).join('\n');
+    expect(printed).toContain('! attestation 0 of series 0: NOT recorded, it could not be confirmed on chain: POST [redacted] timed out');
+    for (const secret of [UFVK, attesterKey, ...SALTS, RPC_URL]) expect(printed).not.toContain(secret);
+
+    w.attestor.down = null;
+    w.deps.attestor = null;
+    const off = await seedDemo(w.deps, parsed);
+    expect(off.items.filter((item) => item.result === 'skipped').map((item) => item.detail)).toEqual(Array.from({ length: 2 }, () => 'this deployment records no attestations: it names no HedgeAttestor contract, or its network is not mainnet'));
+    // The key is the organisation's whether or not anything is attested here.
+    expect(await w.store.activeKey(seed.org.id, 'hl_attester')).toMatchObject({ secret: attesterKey });
+
+    w.deps.attestor = w.attestor;
+    const later = await seedDemo(w.deps, parsed);
+    expect(later.complete).toBe(true);
+    expect(await w.store.listAttestations(seed.org.id)).toHaveLength(2);
   });
 });

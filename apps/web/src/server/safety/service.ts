@@ -9,7 +9,7 @@ import { solanaAccess, tempoAccess } from '../rails/access';
 import { messageOf } from '../redact';
 import { type KeyScope, keyScopes } from './scopes';
 
-type SafetyDeps = Pick<Deps, 'store' | 'hyperliquid' | 'tempo' | 'solana' | 'now' | 'redact'>;
+type SafetyDeps = Pick<Deps, 'store' | 'hyperliquid' | 'tempo' | 'solana' | 'attestor' | 'now' | 'redact'>;
 
 export const PROBE_KINDS = ['hyperliquid_withdrawal', 'tempo_over_limit', 'tempo_out_of_scope', 'solana_over_allowance'] as const;
 export type ProbeKind = (typeof PROBE_KINDS)[number];

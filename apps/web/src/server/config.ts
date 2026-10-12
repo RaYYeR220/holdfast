@@ -32,6 +32,24 @@ export interface SolanaSettings {
   markersFrom: bigint | undefined;
 }
 
+/** ZEC among HyperCore's perpetuals, as the HedgeAttestor contract reads it. */
+export interface ZecPerp {
+  /** Index of the perpetual in HyperCore's universe. */
+  index: number;
+  /** Size precision: a position is reported in units of 10^-szDecimals ZEC, a price in units of 10^-(6 - szDecimals) dollars. */
+  szDecimals: number;
+}
+
+export interface AttestorSettings {
+  chainId: number;
+  rpcUrl: string;
+  /** The deployed HedgeAttestor contract. */
+  contract: Address;
+  perp: ZecPerp;
+  /** The least time between two snapshots of one organisation, in minutes. */
+  everyMinutes: number;
+}
+
 /**
  * The deployment's settings. Every one is read, checked and remembered the
  * first time something asks for it, so a part of the application that does
@@ -54,6 +72,12 @@ export interface Config {
   tempo(): TempoSettings;
   solana(): SolanaSettings;
   oneClickApiKey(): string | undefined;
+  /**
+   * Where hedge attestations are recorded. Null when this deployment records
+   * none: no contract is named, or the network is not mainnet, the only one
+   * the contract is deployed for.
+   */
+  attestor(): AttestorSettings | null;
   /** Every configured value that must not be shown or logged, as it was written. */
   secrets(): string[];
 }
@@ -79,6 +103,23 @@ const TEMPO_DEFAULT_TOKEN: Record<TempoNetwork, Address> = {
   mainnet: TOKENS.mainnet.USDCe,
   moderato: TOKENS.moderato.AlphaUSD,
 };
+
+/** HyperEVM on Hyperliquid mainnet, the chain the HedgeAttestor contract is deployed on. */
+export const HYPEREVM_CHAIN_ID = 999;
+const HYPEREVM_RPC = 'https://rpc.hyperliquid.xyz/evm';
+
+/**
+ * ZEC on each network. The index is not the same on both, and the contract
+ * reads the position and the prices by it. On testnet the perpetual is
+ * delisted; no attestation is made there.
+ */
+export const ZEC_PERP: Record<HoldfastNetwork, ZecPerp> = {
+  mainnet: { index: 214, szDecimals: 2 },
+  testnet: { index: 193, szDecimals: 0 },
+};
+
+export const DEFAULT_ATTEST_EVERY_MINUTES = 60;
+export const MIN_ATTEST_EVERY_MINUTES = 5;
 
 const BASE58_ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
@@ -227,8 +268,28 @@ export function readConfig(env: Env): Config {
 
     oneClickApiKey: once(() => optional('ONECLICK_API_KEY')),
 
+    attestor: once(() => {
+      const contract = optional('HEDGE_ATTESTOR_ADDRESS');
+      if (contract === undefined) return null;
+      if (!isAddress(contract)) throw new ConfigError('HEDGE_ATTESTOR_ADDRESS', 'is not a contract address');
+      const rpcUrl = optional('HYPEREVM_RPC_URL');
+      const every = optional('ATTEST_EVERY_MINUTES');
+      if (every !== undefined && (!/^\d{1,6}$/.test(every) || Number(every) < MIN_ATTEST_EVERY_MINUTES)) {
+        throw new ConfigError('ATTEST_EVERY_MINUTES', `must be a whole number of minutes, at least ${MIN_ATTEST_EVERY_MINUTES}`);
+      }
+      const settings: AttestorSettings = {
+        chainId: HYPEREVM_CHAIN_ID,
+        rpcUrl: rpcUrl === undefined ? HYPEREVM_RPC : url('HYPEREVM_RPC_URL', rpcUrl, ['https:', 'http:']),
+        contract: getAddress(contract),
+        perp: ZEC_PERP.mainnet,
+        everyMinutes: every === undefined ? DEFAULT_ATTEST_EVERY_MINUTES : Number(every),
+      };
+      // The contract is deployed on mainnet's HyperEVM and nowhere else.
+      return network() === 'mainnet' ? settings : null;
+    }),
+
     secrets: () =>
-      ['DATABASE_URL', 'HOLDFAST_MASTER_KEY', 'TICK_SECRET', 'SESSION_SECRET', 'TEMPO_SPONSOR_PRIVATE_KEY', 'ONECLICK_API_KEY', 'TEMPO_RPC_URL', 'SOLANA_RPC_URL']
+      ['DATABASE_URL', 'HOLDFAST_MASTER_KEY', 'TICK_SECRET', 'SESSION_SECRET', 'TEMPO_SPONSOR_PRIVATE_KEY', 'ONECLICK_API_KEY', 'TEMPO_RPC_URL', 'SOLANA_RPC_URL', 'HYPEREVM_RPC_URL']
         .map((name) => optional(name))
         .filter((value): value is string => value !== undefined),
   };

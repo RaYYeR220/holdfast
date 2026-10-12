@@ -3,6 +3,7 @@ import { DEFAULT_POLICY, type Policy } from '@holdfast/core';
 import type { KeyKind, NewServiceKey, OrgPatch, OrgRecord } from '@holdfast/db';
 import { redactViewingKeys } from '@holdfast/zcash';
 import { getAddress, isAddress } from 'viem';
+import { newAttesterKey } from '../attestations/service';
 import { type HoldfastNetwork, looksLikeSolanaAddress } from '../config';
 import type { Deps } from '../deps';
 import { invalid } from '../errors';
@@ -11,7 +12,7 @@ import { invalid } from '../errors';
 const FIRST_SHIELDED_BLOCK: Record<HoldfastNetwork, number> = { mainnet: 419_200, testnet: 280_000 };
 
 /** The keys the service holds for an organisation. None of them can move the organisation's money on its own terms. */
-const SERVICE_KEY_KINDS: readonly KeyKind[] = ['hl_agent', 'tempo_access', 'solana_delegate'];
+const SERVICE_KEY_KINDS: readonly KeyKind[] = ['hl_agent', 'tempo_access', 'solana_delegate', 'hl_attester'];
 
 export interface NewOrganisation {
   name: string;
@@ -88,9 +89,10 @@ async function view(deps: Pick<Deps, 'store'>, org: OrgRecord): Promise<Organisa
  * Register an organisation for `owner`, the address that signed in. The
  * treasury is known only through its viewing key, which is checked to be one
  * and nothing more. The service makes its own keys for the organisation
- * here: a Hyperliquid agent, a Tempo access key and a Solana delegate. Until
- * the treasurer authorizes each of them on its chain they can do nothing, and
- * after that only what was authorized.
+ * here: a Hyperliquid agent, a Tempo access key, a Solana delegate and an
+ * attester for the HedgeAttestor contract. Until the treasurer authorizes
+ * each of them on its chain they can do nothing, and after that only what was
+ * authorized.
  */
 export async function createOrganisation(deps: Pick<Deps, 'store' | 'zcash' | 'hyperliquid' | 'tempo' | 'solana'>, owner: string, input: NewOrganisation): Promise<OrganisationView> {
   const ufvk = input.ufvk.trim();
@@ -107,6 +109,7 @@ export async function createOrganisation(deps: Pick<Deps, 'store' | 'zcash' | 'h
     { kind: 'hl_agent', address: agent.address, secret: agent.privateKey },
     { kind: 'tempo_access', address: access.address, secret: access.privateKey },
     { kind: 'solana_delegate', address: delegate.address, secret: delegate.secret },
+    newAttesterKey(),
   ];
 
   const id = randomUUID();

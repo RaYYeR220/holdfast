@@ -2,6 +2,7 @@ import { type Hex, lotsToZec, marginRatio, notionalUsd, zatToLots } from '@holdf
 import type { OrgRecord, PayoutChain } from '@holdfast/db';
 import { type JournalEntry, verifyChain } from '@holdfast/engine';
 import { formatZec } from '@holdfast/zcash';
+import { type AttestationSummary, latestAttestation } from '../attestations/service';
 import { gatherBooks, statementOf } from '../books/service';
 import type { Deps } from '../deps';
 import { ApiError, notFound } from '../errors';
@@ -24,7 +25,7 @@ const PAGE = 25;
 const MAX_PAGE = 100;
 const RECEIPTS_SHOWN = 100;
 
-type DemoDeps = Pick<Deps, 'store' | 'hyperliquid' | 'tempo' | 'solana' | 'now' | 'redact'>;
+type DemoDeps = Pick<Deps, 'store' | 'hyperliquid' | 'tempo' | 'solana' | 'attestor' | 'now' | 'redact'>;
 
 export async function demoOrg(deps: Pick<Deps, 'store'>, orgId: string): Promise<OrgRecord> {
   const org = await deps.store.findOrg(orgId);
@@ -49,13 +50,15 @@ export interface DemoOverview {
   locked: Reading<{ lots: number; zec: number; usd: number }>;
   /** The short against what the policy calls for; it needs the treasury and the venue both. */
   coverage: Reading<{ targetLots: number; bps: number | null }>;
+  /** The latest snapshot the HedgeAttestor contract holds of the hedge, read from the chain now; a null value when the current series holds none. */
+  attestation: Reading<AttestationSummary | null>;
 }
 
 export async function demoOverview(deps: DemoDeps, org: OrgRecord): Promise<DemoOverview> {
   const now = deps.now();
   const latest = await latestEntry(deps, org.id);
   const treasury = treasuryReading(deps, org.policy, latest);
-  const venue = await venueReading(deps, org);
+  const [venue, attestation] = await Promise.all([venueReading(deps, org), latestAttestation(deps, org)]);
 
   const coverage = ((): DemoOverview['coverage'] => {
     if (treasury.status !== 'ok') return treasury;
@@ -93,6 +96,7 @@ export async function demoOverview(deps: DemoDeps, org: OrgRecord): Promise<Demo
       return { lots, zec: lotsToZec(lots), usd: notionalUsd(lots, v.markPx) };
     }),
     coverage,
+    attestation,
   };
 }
 
@@ -197,9 +201,9 @@ function refusalUrl(deps: Pick<Deps, 'tempo' | 'solana'>, chain: string, tx: str
   return txUrlOf(deps, chain, tx);
 }
 
-/** Each key's scope as its chain reports it now, and the refusals on record. */
-export async function demoSafety(deps: DemoDeps, org: OrgRecord): Promise<{ keys: KeyScope[]; refusals: Reading<DemoRefusal[]> }> {
-  const keys = await keyScopes(deps, org);
+/** Each key's scope as its chain reports it now, the refusals on record, and the latest snapshot of the hedge the chain holds. */
+export async function demoSafety(deps: DemoDeps, org: OrgRecord): Promise<{ keys: KeyScope[]; refusals: Reading<DemoRefusal[]>; attestation: Reading<AttestationSummary | null> }> {
+  const [keys, attestation] = await Promise.all([keyScopes(deps, org), latestAttestation(deps, org)]);
   const refusals = (await deps.store.listRefusals(org.id)).map((refusal) => ({
     chain: refusal.chain,
     kind: refusal.kind,
@@ -209,7 +213,7 @@ export async function demoSafety(deps: DemoDeps, org: OrgRecord): Promise<{ keys
     txUrl: refusalUrl(deps, refusal.chain, refusal.tx),
     at: refusal.createdAt,
   }));
-  return { keys, refusals: available(DATABASE, deps.now(), refusals) };
+  return { keys, refusals: available(DATABASE, deps.now(), refusals), attestation };
 }
 
 /** The statement's figures without the ledger behind them and without the names of payees. */

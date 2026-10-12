@@ -1,8 +1,10 @@
 import { z } from 'zod';
+import { attestationList, entryProof } from '../attestations/service';
 import { scorecardOf, seriesOf } from '../backtest/service';
 import { demoBooks, demoJournal, demoList, demoOrg, demoOverview, demoPayouts, demoReceipts, demoSafety } from '../demo/service';
 import { orgId, publicEndpoint } from '../http/endpoint';
 import { receiptOf } from '../payouts/receipt';
+import { snapshotParams } from './attestations';
 
 /**
  * What anyone may read without signing in: the organisations that chose to
@@ -41,6 +43,19 @@ export const getDemoSafety = publicEndpoint({ params: demoParams }, async ({ dep
 
 /** GET /api/demo/[orgId]/books */
 export const getDemoBooks = publicEndpoint({ params: demoParams }, async ({ deps, params }) => demoBooks(deps, await demoOrg(deps, params.orgId)));
+
+/** GET /api/demo/[orgId]/attestations: the latest snapshots of the hedge the HedgeAttestor contract holds, read from the chain now. */
+export const getDemoAttestations = publicEndpoint({ params: demoParams }, async ({ deps, params }) => attestationList(deps, await demoOrg(deps, params.orgId)));
+
+/**
+ * GET /api/demo/[orgId]/attestations/[series]/[number]/proof?seq=: the proof
+ * that journal entry `seq` is under the root a snapshot committed to, with
+ * the contract's own verdict, and everything needed to ask the contract again.
+ */
+export const getDemoEntryProof = publicEndpoint(
+  { params: snapshotParams, query: z.strictObject({ seq: z.coerce.number().int().min(1).max(2_147_483_647) }) },
+  async ({ deps, params, query }) => entryProof(deps, await demoOrg(deps, params.orgId), { series: params.series, number: params.number, seq: query.seq }),
+);
 
 /** GET /api/backtest/scorecard */
 export const getScorecard = publicEndpoint({}, async ({ deps }) => scorecardOf(deps));

@@ -50,6 +50,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@holdfast/attest':
+        specifier: workspace:*
+        version: link:../../packages/attest
       '@holdfast/books':
         specifier: workspace:*
         version: link:../../packages/books
@@ -80,12 +83,21 @@ importers:
       '@ledgerhq/zcash-utils':
         specifier: 2.5.1
         version: 2.5.1
+      '@wallet-standard/app':
+        specifier: ^1.1.1
+        version: 1.1.1
+      '@wallet-standard/base':
+        specifier: ^1.1.1
+        version: 1.1.1
       jose:
         specifier: ^6.2.12
         version: 6.2.12
       next:
         specifier: ^16.4.0
         version: 16.4.0(@types/node@26.6.5)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      ox:
+        specifier: 0.14.54
+        version: 0.14.54(typescript@7.0.2)(zod@4.6.5)
       react:
         specifier: ^19.3.0
         version: 19.3.0
@@ -1590,6 +1602,14 @@ packages:
 
   '@vitest/spy@5.0.3':
     resolution: {integrity: sha512-XhFysQTB8AZ+P4gMi+Lpo99vg2AZi0qKpaB9yXQl37+CaMEAPO3iH/wGVnSyL5MPERiLezpqTVtrR6UZH5GCXg==}
+
+  '@wallet-standard/app@1.1.1':
+    resolution: {integrity: sha512-WDGwoByhP5gwHH01r5EaLgQdLVkACPCdOMQhmhn8rsm10h/siSgTorShzBxrn0ExSPof+Lu+C3TfgqBrPa1xoQ==}
+    engines: {node: '>=22'}
+
+  '@wallet-standard/base@1.1.1':
+    resolution: {integrity: sha512-gggIHTtxicF9XFMQ12DkfS6NAG92Ak795JeSA7f2whAQ6Y3AkMWWuCMxSZXG2NIPN42kEaZSNVjqMsJRaJRxMQ==}
+    engines: {node: '>=22'}
 
   abitype@1.2.3:
     resolution: {integrity: sha512-Ofer5QUnuUdTFsBRwARMoWKOH1ND5ehwYhJ3OJ/BQO+StkwQjHw0XyVh4vDttzHB7QOFhPHa/o413PJ82gU/Tg==}
@@ -3227,6 +3247,12 @@ snapshots:
       vite: 8.3.4(@types/node@26.6.5)(esbuild@0.28.2)(tsx@4.23.15)
 
   '@vitest/spy@5.0.3': {}
+
+  '@wallet-standard/app@1.1.1':
+    dependencies:
+      '@wallet-standard/base': 1.1.1
+
+  '@wallet-standard/base@1.1.1': {}
 
   abitype@1.2.3(typescript@7.0.2)(zod@4.6.5):
     optionalDependencies:

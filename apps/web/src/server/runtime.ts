@@ -2,6 +2,7 @@ import type { Bar } from '@holdfast/core';
 import { PgStore, connect } from '@holdfast/db';
 import { createOneClick, createReferencePrice } from '@holdfast/intents';
 import { checkUfvk, createTreasuryScanner } from '@holdfast/zcash';
+import { attestorPort } from './adapters/attestor';
 import { hyperliquidPort } from './adapters/hyperliquid';
 import { solanaPort } from './adapters/solana';
 import { tempoPort } from './adapters/tempo';
@@ -39,6 +40,10 @@ export function createRuntime(env: Env): Deps {
   });
   const tempo = once(() => tempoPort(config.tempo(), config.tempoSponsorPrivateKey));
   const solana = once(() => solanaPort(config.solana()));
+  const attestor = once(() => {
+    const settings = config.attestor();
+    return settings === null ? null : attestorPort(settings);
+  });
   // The market data ships inside the core package, beside its sources.
   const bars = once(async () => (await import('../../../../packages/core/data/zec-1h.json')).default.bars as Bar[]);
 
@@ -81,6 +86,9 @@ export function createRuntime(env: Env): Deps {
     },
     get solana() {
       return solana();
+    },
+    get attestor() {
+      return attestor();
     },
     bars,
   };

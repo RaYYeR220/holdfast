@@ -276,7 +276,7 @@ describe('the public demo', () => {
       const answer = await get(w, getDemoSafety, org.id);
       const byKind = new Map<string, Record<string, any>>(answer.body.keys.map((key: { kind: string }) => [key.kind, key]));
 
-      expect([...byKind.keys()]).toEqual(['zcash_viewing_key', 'hl_agent', 'tempo_access', 'solana_delegate']);
+      expect([...byKind.keys()]).toEqual(['zcash_viewing_key', 'hl_agent', 'tempo_access', 'solana_delegate', 'hl_attester']);
       expect(byKind.get('zcash_viewing_key')).toMatchObject({ address: null, scope: { status: 'ok', value: { canView: true, canSpend: false } } });
       expect(byKind.get('hl_agent')).toMatchObject({ address: await keyAddress(w, org.id, 'hl_agent'), scope: { status: 'unavailable', source: 'hyperliquid' } });
       expect(byKind.get('tempo_access')).toMatchObject({
@@ -285,6 +285,7 @@ describe('the public demo', () => {
         scope: { status: 'ok', source: 'tempo', value: { authorized: true, revoked: false, limited: true, remaining: '10000000', scope: { unrestricted: false, otherTargets: [] } } },
       });
       expect(byKind.get('solana_delegate')).toMatchObject({ address: await keyAddress(w, org.id, 'solana_delegate'), scope: { status: 'ok', source: 'solana', value: { remaining: '50000000' } } });
+      expect(byKind.get('hl_attester')).toMatchObject({ address: await keyAddress(w, org.id, 'hl_attester'), scope: { status: 'ok', source: 'hyperevm', readAt: w.clock.ms, value: { registered: false } } });
       for (const key of byKind.values()) expect(key.enforcedBy.length).toBeGreaterThan(40);
 
       expect(answer.body.refusals.value).toEqual([
@@ -297,16 +298,18 @@ describe('the public demo', () => {
       const { w, org } = await demo();
       w.tempoChain(await keyAddress(w, org.id, 'tempo_access')).failing.add('keyState');
       w.solana.down = 'connect ECONNREFUSED';
+      w.attestor.down = 'attesterOf failed: HTTP request failed.';
       const { body } = await get(w, getDemoSafety, org.id);
       const scope = (kind: string) => body.keys.find((key: { kind: string }) => key.kind === kind).scope;
       expect(scope('tempo_access')).toEqual({ status: 'unavailable', source: 'tempo', readAt: w.clock.ms, reason: 'keyState failed: fetch failed' });
       expect(scope('solana_delegate')).toEqual({ status: 'unavailable', source: 'solana', readAt: w.clock.ms, reason: 'connect ECONNREFUSED' });
+      expect(scope('hl_attester')).toEqual({ status: 'unavailable', source: 'hyperevm', readAt: w.clock.ms, reason: 'attesterOf failed: HTTP request failed.' });
     });
 
     it('never shows a key itself', async () => {
       const { w, org } = await demo();
       const answer = await get(w, getDemoSafety, org.id);
-      for (const kind of ['hl_agent', 'tempo_access', 'solana_delegate'] as const) {
+      for (const kind of ['hl_agent', 'tempo_access', 'solana_delegate', 'hl_attester'] as const) {
         expect(answer.text).not.toContain((await w.store.activeKey(org.id, kind))?.secret);
       }
       expect(answer.text).not.toContain(UFVK);

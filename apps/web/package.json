@@ -13,6 +13,7 @@
     "seed-demo": "tsx scripts/seed-demo.ts"
   },
   "dependencies": {
+    "@holdfast/attest": "workspace:*",
     "@holdfast/books": "workspace:*",
     "@holdfast/core": "workspace:*",
     "@holdfast/db": "workspace:*",
@@ -23,8 +24,11 @@
     "@holdfast/tempo": "workspace:*",
     "@holdfast/zcash": "workspace:*",
     "@ledgerhq/zcash-utils": "2.5.1",
+    "@wallet-standard/app": "^1.1.1",
+    "@wallet-standard/base": "^1.1.1",
     "jose": "^6.2.12",
     "next": "^16.4.0",
+    "ox": "0.14.54",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "viem": "2.57.4",

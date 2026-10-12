@@ -1,6 +1,7 @@
 import type { Advisory, Decision, RefusalCode } from '@holdfast/core';
 import { type JournalEntry, tick } from '@holdfast/engine';
 import type { Hex } from 'viem';
+import { ATTEST_BUDGET_MS, type OrgAttestation, attestOrganisation } from '../attestations/service';
 import type { Deps } from '../deps';
 import { type SwapRefresh, refreshSwap } from '../funding/service';
 import { messageOf } from '../redact';
@@ -15,6 +16,12 @@ export const TICK_CONCURRENCY = 4;
 export const TICK_BUDGET_MS = 240_000;
 /** Swaps looked at per invocation; the ones not looked at for longest come first. */
 export const SWAPS_PER_TICK = 20;
+/**
+ * How much longer than the time an attestation was given its answer is waited
+ * for, ms, and never longer than that time again. Within its time the step
+ * answers for itself; this only covers the moment it takes to do so.
+ */
+const ATTEST_GRACE_MS = 5_000;
 
 export type OrgTick =
   | {
@@ -40,12 +47,16 @@ export interface TickReport {
   finishedAt: number;
   orgs: OrgTick[];
   swaps: SwapRefresh[];
+  /** What the attestation step did for each organisation whose tick ran; empty where this deployment records no attestations. */
+  attestations: OrgAttestation[];
 }
 
 export interface TickOptions {
   concurrency?: number;
   budgetMs?: number;
   swapLimit?: number;
+  /** The most one organisation's attestation may take, ms. */
+  attestBudgetMs?: number;
 }
 
 const OUT_OF_TIME = 'the time allowed for this invocation ran out';
@@ -109,11 +120,34 @@ async function tickOrg(deps: Deps, orgId: string): Promise<OrgTick> {
  * reported as skipped, and one still running is reported as failed, since its
  * journal entry was not seen. Its lease on the organisation runs out on its
  * own.
+ *
+ * Where attestations are recorded, an organisation's attestation step starts
+ * once its tick has run. It has its own bounded time and is collected at the
+ * end, so it holds up neither the next organisation's tick nor the answer,
+ * and nothing it does can change what is reported of the tick.
  */
 export async function runTick(deps: Deps, options: TickOptions = {}): Promise<TickReport> {
   const startedAt = deps.now();
   const budgetMs = options.budgetMs ?? TICK_BUDGET_MS;
   const remaining = () => budgetMs - (deps.now() - startedAt);
+
+  let attests = false;
+  try {
+    attests = deps.attestor !== null;
+  } catch (error) {
+    // A setting of the attestations that cannot be used switches them off; it does not cost anyone their tick.
+    deps.report(`attestations are off: ${deps.redact(messageOf(error))}`);
+  }
+  const attesting = new Map<string, Promise<OrgAttestation>>();
+  const attest = (orgId: string): Promise<OrgAttestation> => {
+    const budget = Math.min(options.attestBudgetMs ?? ATTEST_BUDGET_MS, remaining());
+    if (budget <= 0) return Promise.resolve({ orgId, status: 'skipped', reason: OUT_OF_TIME });
+    const late = (): OrgAttestation => ({ orgId, status: 'unavailable', reason: `${OUT_OF_TIME} before the attestation finished` });
+    // The step answers for its own failures. Should it reject all the same, that is an answer too, and it is
+    // taken here, where the promise is made, so that it is never left unhandled while the ticks go on.
+    const step = attestOrganisation(deps, orgId, { budgetMs: budget }).catch((): OrgAttestation => ({ orgId, status: 'unavailable', reason: 'the attestation step failed' }));
+    return within(budget + Math.min(ATTEST_GRACE_MS, budget), step, late);
+  };
 
   const orgIds = await deps.store.listOrgIds();
   const results = new Map<string, OrgTick>();
@@ -125,7 +159,10 @@ export async function runTick(deps: Deps, options: TickOptions = {}): Promise<Ti
         results.set(id, { orgId: id, status: 'skipped', reason: OUT_OF_TIME });
         continue;
       }
-      results.set(id, await within(remaining(), tickOrg(deps, id), () => ({ orgId: id, status: 'failed', error: `${OUT_OF_TIME} before the tick finished` })));
+      const outcome = await within(remaining(), tickOrg(deps, id), (): OrgTick => ({ orgId: id, status: 'failed', error: `${OUT_OF_TIME} before the tick finished` }));
+      results.set(id, outcome);
+      // Started and not waited for here: the next organisation in the queue does not stand behind a chain.
+      if (attests && outcome.status === 'ran') attesting.set(id, attest(id));
     }
   };
   const workers = Math.max(1, Math.min(options.concurrency ?? TICK_CONCURRENCY, orgIds.length));
@@ -143,5 +180,7 @@ export async function runTick(deps: Deps, options: TickOptions = {}): Promise<Ti
     deps.report(`swaps were not refreshed: ${deps.redact(messageOf(error))}`);
   }
 
-  return { startedAt, finishedAt: deps.now(), orgs: orgIds.map((orgId) => results.get(orgId) ?? { orgId, status: 'skipped', reason: OUT_OF_TIME }), swaps };
+  const attestations = await Promise.all(orgIds.flatMap((orgId) => attesting.get(orgId) ?? []));
+
+  return { startedAt, finishedAt: deps.now(), orgs: orgIds.map((orgId) => results.get(orgId) ?? { orgId, status: 'skipped', reason: OUT_OF_TIME }), swaps, attestations };
 }

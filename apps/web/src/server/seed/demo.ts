@@ -1,27 +1,47 @@
+import { commitTreasury } from '@holdfast/attest';
 import { DEFAULT_POLICY } from '@holdfast/core';
-import { type NewServiceKey, type PaidPayoutRun, runNumberOf } from '@holdfast/db';
+import { type NewAttestation, type NewServiceKey, type PaidPayoutRun, runNumberOf } from '@holdfast/db';
 import { decodeRevertReason, lineMemo, lineOfMemo } from '@holdfast/tempo';
 import { redactViewingKeys } from '@holdfast/zcash';
 import { type Hex, getAddress, isAddress } from 'viem';
 import { privateKeyToAddress } from 'viem/accounts';
 import { z } from 'zod';
+import { attesterKeyOf } from '../attestations/service';
 import { looksLikeSolanaAddress } from '../config';
 import type { Deps } from '../deps';
 import { messageOf } from '../redact';
 
 /**
  * Registers what an organisation has already done on its chains: who it is,
- * the service keys it uses, the payout runs it has paid and the refusals it
- * has provoked. Nothing is taken on the file's word where a chain can be
- * asked: a run or a refusal is recorded only once its chain shows it. Running
- * it again records nothing twice.
+ * the service keys it uses, the payout runs it has paid, the refusals it has
+ * provoked and the snapshots of its hedge it has had attested. Nothing is
+ * taken on the file's word where a chain can be asked: a run, a refusal or an
+ * attestation is recorded only once its chain shows it. Running it again
+ * records nothing twice.
  */
 
 const hexKey = z.string().regex(/^0x[0-9a-fA-F]{64}$/);
+/** Thirty-two bytes as hex: a transaction hash, a journal root, a salt. */
+const bytes32 = z
+  .string()
+  .regex(/^0x[0-9a-fA-F]{64}$/)
+  .transform((text) => text.toLowerCase() as Hex);
 const moment = z.iso.datetime({ offset: true }).transform((text) => Date.parse(text));
 const amount = z
   .string()
   .regex(/^[1-9]\d{0,38}$/)
+  .transform((digits) => BigInt(digits));
+/** A series, a snapshot number or a count of journal entries. */
+const counter = z
+  .number()
+  .int()
+  .min(0)
+  .max(Number.MAX_SAFE_INTEGER)
+  .transform((n) => BigInt(n));
+/** A balance in zatoshi; unlike an amount to pay it may be zero. */
+const zatoshi = z
+  .string()
+  .regex(/^(0|[1-9]\d{0,18})$/)
   .transform((digits) => BigInt(digits));
 
 const seedSchema = z.strictObject({
@@ -44,6 +64,8 @@ const seedSchema = z.strictObject({
     tempoAccessKey: hexKey.optional(),
     /** The key file the Solana tools write, a list of 64 bytes; or the hex of those bytes or of the 32-byte seed. */
     solanaDelegate: z.union([z.array(z.number().int().min(0).max(255)).refine((bytes) => bytes.length === 32 || bytes.length === 64, 'must be 32 or 64 bytes'), z.string().regex(/^(?:[0-9a-fA-F]{64}|[0-9a-fA-F]{128})$/)]).optional(),
+    /** The key the organisation's account has named on the HedgeAttestor contract. */
+    hedgeAttester: hexKey.optional(),
   }),
   payoutRuns: z
     .array(
@@ -64,6 +86,8 @@ const seedSchema = z.strictObject({
     )
     .default([]),
   refusals: z.array(z.strictObject({ chain: z.enum(['tempo', 'solana']), kind: z.string().min(1).max(64), tx: z.string().min(1).max(128), attempted: z.string().min(1).max(500) })).default([]),
+  /** Snapshots the HedgeAttestor contract already holds for the organisation, with what opens each treasury commitment. */
+  attestations: z.array(z.strictObject({ series: counter, number: counter, tx: bytes32, journalCount: counter, root: bytes32, treasuryZat: zatoshi, salt: bytes32 })).default([]),
 });
 
 export type DemoSeed = z.infer<typeof seedSchema>;
@@ -96,7 +120,7 @@ export interface SeedReport {
   complete: boolean;
 }
 
-type SeedDeps = Pick<Deps, 'store' | 'zcash' | 'tempo' | 'solana' | 'redact'>;
+type SeedDeps = Pick<Deps, 'store' | 'zcash' | 'tempo' | 'solana' | 'attestor' | 'redact'>;
 
 const sameHex = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 
@@ -106,13 +130,14 @@ function solanaSecret(key: NonNullable<DemoSeed['keys']['solanaDelegate']>): str
 
 async function serviceKeys(deps: SeedDeps, seed: DemoSeed): Promise<NewServiceKey[]> {
   const keys: NewServiceKey[] = [];
-  const { hyperliquidAgent, tempoAccessKey, solanaDelegate } = seed.keys;
+  const { hyperliquidAgent, tempoAccessKey, solanaDelegate, hedgeAttester } = seed.keys;
   if (hyperliquidAgent !== undefined) keys.push({ kind: 'hl_agent', address: privateKeyToAddress(hyperliquidAgent as Hex).toLowerCase(), secret: hyperliquidAgent });
   if (tempoAccessKey !== undefined) keys.push({ kind: 'tempo_access', address: deps.tempo.rail(tempoAccessKey as Hex).accessKeyAddress, secret: tempoAccessKey });
   if (solanaDelegate !== undefined) {
     const secret = solanaSecret(solanaDelegate);
     keys.push({ kind: 'solana_delegate', address: await deps.solana.rail(secret).delegate(), secret });
   }
+  if (hedgeAttester !== undefined) keys.push(attesterKeyOf(hedgeAttester as Hex));
   return keys;
 }
 
@@ -173,6 +198,51 @@ async function confirmedRefusal(deps: SeedDeps, seed: DemoSeed, refusal: SeedRef
   if (recorded === null) return 'the chain has no such transaction';
   if (!recorded.failed) return 'the transaction succeeded on chain, so it is not a refusal';
   return { outcome: recorded.error ?? 'failed on chain', evidence: { failedOnChain: true, error: recorded.error } };
+}
+
+type SeedAttestation = DemoSeed['attestations'][number];
+
+/**
+ * Ask the contract for the snapshot the file describes, and the chain for the
+ * transaction said to have recorded it. It comes back ready to record only if
+ * the snapshot holds this journal root and count, the balance and salt open
+ * its treasury commitment, and that transaction recorded exactly it.
+ */
+async function confirmedAttestation(deps: SeedDeps, seed: DemoSeed, attestation: SeedAttestation): Promise<NewAttestation | string> {
+  const { attestor } = deps;
+  if (attestor === null) return 'this deployment records no attestations: it names no HedgeAttestor contract, or its network is not mainnet';
+  const user = getAddress(seed.org.owner);
+  const { series, number } = attestation;
+
+  const current = await attestor.series(user, 'current');
+  if (series > current.series) return `the chain holds no series ${series} for this account`;
+  const held = series === current.series ? current : await attestor.series(user, series);
+  if (number >= held.snapshotCount) return `series ${series} holds ${held.snapshotCount} snapshot(s) on chain, so none with this number`;
+  const snapshot = await attestor.snapshot(user, series, number);
+
+  if (snapshot.journalCount !== attestation.journalCount) return `the chain holds a snapshot of ${snapshot.journalCount} journal entries, the file one of ${attestation.journalCount}`;
+  if (!sameHex(snapshot.journalRoot, attestation.root)) return 'the journal root is not the one the chain holds';
+  const commitment = commitTreasury(attestation.treasuryZat, attestation.salt);
+  if (!sameHex(snapshot.treasuryCommitment, commitment)) return 'the balance and the salt do not open the treasury commitment the chain holds';
+
+  const receipt = await attestor.receipt(attestation.tx);
+  if (receipt === null) return 'the chain has no such transaction';
+  const recorded = receipt.ok ? receipt.recorded : null;
+  if (recorded === null) return 'the transaction recorded no snapshot';
+  if (!sameHex(recorded.user, user) || recorded.snapshot.series !== series || recorded.snapshot.number !== number) return 'the transaction recorded another snapshot than the one the file names';
+
+  return {
+    series,
+    number,
+    tx: attestation.tx,
+    journalCount: snapshot.journalCount,
+    journalRoot: snapshot.journalRoot,
+    treasury: { zat: attestation.treasuryZat, salt: attestation.salt, commitment },
+    // The chain's own time for it: the timestamp of the block that recorded the snapshot.
+    sentAt: Number(snapshot.timestamp) * 1000,
+    status: 'confirmed',
+    detail: null,
+  };
 }
 
 export async function seedDemo(deps: SeedDeps, seed: DemoSeed): Promise<SeedReport> {
@@ -238,6 +308,25 @@ export async function seedDemo(deps: SeedDeps, seed: DemoSeed): Promise<SeedRepo
       }
       const row = await deps.store.recordRefusal(org.id, { chain: refusal.chain, kind: refusal.kind, attempted: refusal.attempted, outcome: confirmed.outcome, tx: refusal.tx, evidence: confirmed.evidence });
       items.push({ what, result: row === null ? 'kept' : 'recorded', detail: row === null ? 'already on record' : confirmed.outcome });
+    } catch (error) {
+      items.push({ what, result: 'skipped', detail: `it could not be confirmed on chain: ${safe(messageOf(error))}` });
+    }
+  }
+
+  for (const attestation of seed.attestations) {
+    const what = `attestation ${attestation.number} of series ${attestation.series}`;
+    try {
+      if ((await deps.store.snapshotAttestations(org.id, attestation.series, [attestation.number])).length > 0) {
+        items.push({ what, result: 'kept', detail: 'already on record' });
+        continue;
+      }
+      const confirmed = await confirmedAttestation(deps, seed, attestation);
+      if (typeof confirmed === 'string') {
+        items.push({ what, result: 'skipped', detail: confirmed });
+        continue;
+      }
+      const row = await deps.store.recordAttestation(org.id, confirmed);
+      items.push({ what, result: row === null ? 'kept' : 'recorded', detail: row === null ? 'already on record' : `${confirmed.journalCount} journal entries attested in ${attestation.tx}` });
     } catch (error) {
       items.push({ what, result: 'skipped', detail: `it could not be confirmed on chain: ${safe(messageOf(error))}` });
     }
