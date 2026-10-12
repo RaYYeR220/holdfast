@@ -7,6 +7,7 @@ Holdfast is a treasury autopilot for teams that are paid in ZEC and pay their co
 | What | Where |
 |---|---|
 | Landing page | https://holdfast-iota.vercel.app |
+| Three-minute demo of the live product | https://youtu.be/QaSax6chlrE |
 | Public demo workspace, read-only, no sign-in | https://holdfast-iota.vercel.app/demo |
 | Application, sign-in with the wallet of the team's Hyperliquid account | https://holdfast-iota.vercel.app/app |
 | The demo organisation as JSON | [overview](https://holdfast-iota.vercel.app/api/demo/demo/overview), [journal](https://holdfast-iota.vercel.app/api/demo/demo/journal), [keys and refusals](https://holdfast-iota.vercel.app/api/demo/demo/safety), [payouts](https://holdfast-iota.vercel.app/api/demo/demo/payouts), [receipts](https://holdfast-iota.vercel.app/api/demo/demo/receipts), [books](https://holdfast-iota.vercel.app/api/demo/demo/books) |

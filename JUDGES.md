@@ -4,6 +4,8 @@ Holdfast is a treasury autopilot for teams paid in ZEC. The claim to check is na
 
 ## What to open, in order
 
+A three-minute video of the live product: https://youtu.be/QaSax6chlrE
+
 1. The live demo, one minute. https://holdfast-iota.vercel.app/demo is the demo organisation: a real treasury of a few dollars on mainnet. The same data as JSON: [overview](https://holdfast-iota.vercel.app/api/demo/demo/overview), [keys and refusals](https://holdfast-iota.vercel.app/api/demo/demo/safety), [journal](https://holdfast-iota.vercel.app/api/demo/demo/journal). The journal gains one entry a minute.
 2. Three refusals, one minute.
    - Tempo, a payment above the key's limit, included and reverted with `SpendingLimitExceeded`: [`0x2246d81e…acb9bce9`](https://explore.tempo.xyz/tx/0x2246d81e18fa8269c799855079e7e9ec3cabec80430b62aedd040ab9acb9bce9)
