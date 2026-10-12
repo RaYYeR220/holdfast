@@ -36,6 +36,8 @@ An explorer shows only that the last transaction exists. The amount and the memo
 
 Check it yourself: scan from the birthday with the published viewing key in any wallet that imports one, or run `holdfast verify` on the published statement (see the README).
 
+Two spellings of one address. The unified address in the table above is the treasury as its wallet shows it, with several receivers. `holdfast verify` names the treasury by the address it derives from the viewing key alone, which carries the Orchard receiver only and begins `u1dafv4je7`. What ties them together is the scan: the published key decrypts the payment that was sent to the first.
+
 ## 2. Margin: ZEC becomes dollars on the team's own Hyperliquid account
 
 The treasurer approved one payment request (ZIP-321) in their own wallet. It paid 0.0093 ZEC to the deposit address of a NEAR Intents swap whose recipient was the team's own Hyperliquid account.
