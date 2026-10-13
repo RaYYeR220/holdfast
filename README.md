@@ -149,7 +149,7 @@ Test counts are tests passed by `pnpm test` on 12 October 2026.
 | `packages/db` | Postgres schema and migrations, the store with its lease, encryption of stored keys | 204 on an in-process Postgres, and 36 for a real one when `HOLDFAST_TEST_DATABASE_URL` is set |
 | `packages/books` | One ledger across all sources, statements, reconciliation, auditor scopes, the published statement | 310 |
 | `packages/attest` | ABI of `HedgeAttestor`, journal leaves and proofs, the treasury commitment, reads of the contract | 47 |
-| `apps/web` | Next.js: the API, `/api/tick` with its attestation step, the pages and their client code | 682 |
+| `apps/web` | Next.js: the API, `/api/tick` with its attestation step, the pages and their client code | 683 |
 | `apps/cli` | `holdfast backtest` and `holdfast verify` | 98 |
 | `contracts` | `HedgeAttestor.sol` with Foundry tests | 67, and 6 read-only fork tests against HyperEVM mainnet when `HYPEREVM_FORK_URL` is set |
 
